@@ -1,3 +1,9 @@
+## [1.3.2](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.3.1...v1.3.2) (2026-10-28)
+
+### Bug Fixes
+
+* Remove the encrypted DNS, keep blocking ad servers ([7b6f9db](https://github.com/Overhypedcat/overhypedcat-twitch-patches/commit/7b6f9dbf0dd1880ca1ca3247b626dee310cb052e))
+
 ## [1.3.1](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.3.0...v1.3.1) (2026-10-28)
 
 ### Bug Fixes
