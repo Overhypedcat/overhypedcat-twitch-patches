@@ -94,7 +94,10 @@ public final class BackupStreamFinder {
         // The player asks for a new playlist every couple of seconds. When no player type was ad-free,
         // searching again right away only floods Twitch with requests, which it answers by throttling
         // the whole app (chat included).
-        if (clock.getAsLong() - session.lastEmptySearchAt < EMPTY_SEARCH_COOLDOWN_MS) return null;
+        if (clock.getAsLong() - session.lastEmptySearchAt < EMPTY_SEARCH_COOLDOWN_MS) {
+            logger.log("Backup search paused (nothing ad-free " + (clock.getAsLong() - session.lastEmptySearchAt) + "ms ago)");
+            return null;
+        }
 
         Map<String, Future<Attempt>> attempts = new LinkedHashMap<>();
         for (String playerType : PLAYER_TYPES) {
@@ -126,6 +129,7 @@ public final class BackupStreamFinder {
                 session.failedPlayerTypes.put(playerType, clock.getAsLong());
                 failed++;
                 lastError = attempt.error;
+                logger.log("Backup " + attempt.error);
             }
             if (attempt.master != null) session.backupMasters.put(playerType, attempt.master);
             else session.backupMasters.remove(playerType);

@@ -31,7 +31,9 @@ public final class PlayerRefresher {
 
     /** Injected at the end of the CorePlayerImpl constructor. */
     public static void register(Player player) {
-        if (player != null) PLAYERS.put(player, Boolean.TRUE);
+        if (player == null) return;
+        PLAYERS.put(player, Boolean.TRUE);
+        DebugLog.log("Player " + System.identityHashCode(player) + " created, " + PLAYERS.size() + " alive");
     }
 
     public static void refreshPlayingPlayers() {
@@ -44,12 +46,14 @@ public final class PlayerRefresher {
                 try {
                     // Buffering players are nudged too: a stall right after the switch is what this fixes.
                     Player.State state = player.getState();
+                    StreamAdsPatch.LOGGER.log("Player " + System.identityHashCode(player) + " state " + state);
                     if (state != Player.State.PLAYING && state != Player.State.BUFFERING) continue;
                     player.pause();
                     MAIN.postDelayed(player::play, PLAY_DELAY_MS);
-                    Log.d(TAG, "Refreshed player after ad break");
+                    StreamAdsPatch.LOGGER.log("Refreshed player " + System.identityHashCode(player) + " after ad break");
                 } catch (Throwable t) {
                     Log.e(TAG, "Player refresh failed", t);
+                    DebugLog.log("Player refresh failed: " + t);
                 }
             }
         }, REFRESH_DELAY_MS);

@@ -23,6 +23,7 @@ final class ProblemNotifier implements Problem.Reporter {
     @Override
     public void report(Problem problem, String detail) {
         Log.w(TAG, problem.code + " " + problem.description + ": " + detail);
+        DebugLog.log("PROBLEM " + problem.code + " " + problem.description + ": " + detail);
         synchronized (shown) {
             if (!shown.add(problem)) return;
         }

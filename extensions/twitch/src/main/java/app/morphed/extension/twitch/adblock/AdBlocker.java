@@ -194,53 +194,84 @@ public final class AdBlocker {
         for (MasterPlaylist.Variant variant : master.variants) {
             sessionsByVariant.put(UrlKey.of(variant.url), session);
         }
-        logger.log("Watching " + channel + " (" + master.variants.size() + " qualities)");
+        StringBuilder qualities = new StringBuilder();
+        for (MasterPlaylist.Variant variant : master.variants) {
+            if (qualities.length() > 0) qualities.append(", ");
+            qualities.append(variant.resolution == null ? "audio" : variant.resolution).append(' ').append(variant.codecs);
+        }
+        logger.log("Watching " + channel + " as " + tokenPlayerType(url) + ": " + qualities);
     }
 
     private String onMediaPlaylist(StreamSession session, String url, String body) {
+        long waitStart = clock.getAsLong();
         synchronized (session) {
-            session.lastSeen = clock.getAsLong();
-            session.lastVariantUrl = session.variantUrlFor(url);
-            MediaPlaylist playlist = MediaPlaylist.parse(body, url);
-            PlaylistStitcher stitcher = session.stitcherFor(url);
-
-            if (!playlist.hasAds()) {
-                Set<String> suspicious = AdMarkers.suspiciousMarkers(body);
-                if (!suspicious.isEmpty()) {
-                    problems.report(Problem.UNRECOGNIZED_AD_MARKERS, String.join(", ", suspicious));
-                }
-                if (session.inAdBreak) {
-                    logger.log("Ad markers gone on " + session.channel);
-                    session.inAdBreak = false;
-                }
-            } else if (!session.inAdBreak) {
-                session.inAdBreak = true;
-                logger.log("Ad markers on " + session.channel + (playlist.hasAdSegments() ? " (stitched ad)" : " (markers only)"));
-            }
-
-            if (playlist.hasAdSegments()) {
-                session.swappingAds = true;
-                MasterPlaylist.Variant variant = session.master.byUrl(session.variantUrlFor(url));
-                BackupStreamFinder.Result backup = variant == null ? null : backups.find(session, variant);
-                if (backup != null) {
-                    breaks.onBlocking(qualityLabel(backup.resolution));
-                    MediaPlaylist backupPlaylist = MediaPlaylist.parse(backup.playlist, backup.url);
-                    return stitcher.process(backupPlaylist, backup.playlist, "backup:" + backup.playerType);
-                }
-                breaks.onBlocking(null);
-                return stitcher.process(playlist, body, PlaylistStitcher.NATIVE);
-            }
-
-            // Ad markers can stay in the playlist a while after the ad itself; the break is over
-            // for the viewer as soon as the original stream has no ad segments left.
-            String output = stitcher.process(playlist, body, PlaylistStitcher.NATIVE);
-            if (session.swappingAds) {
-                logger.log("Ad break over on " + session.channel);
-                session.endAdSwap();
-                breaks.onBreakOver();
-            }
-            return output;
+            long waited = clock.getAsLong() - waitStart;
+            if (waited > 100) logger.log("Waited " + waited + "ms for " + session.channel + " (another playlist was being handled)");
+            return handleMediaPlaylist(session, url, body);
         }
+    }
+
+    /** Called with the session locked. */
+    private String handleMediaPlaylist(StreamSession session, String url, String body) {
+        session.lastSeen = clock.getAsLong();
+        session.lastVariantUrl = session.variantUrlFor(url);
+        MediaPlaylist playlist = MediaPlaylist.parse(body, url);
+        PlaylistStitcher stitcher = session.stitcherFor(url);
+        logger.log(pollSummary(session, url, playlist));
+
+        if (!playlist.hasAds()) {
+            Set<String> suspicious = AdMarkers.suspiciousMarkers(body);
+            if (!suspicious.isEmpty()) {
+                problems.report(Problem.UNRECOGNIZED_AD_MARKERS, String.join(", ", suspicious));
+            }
+            if (session.inAdBreak) {
+                logger.log("Ad markers gone on " + session.channel);
+                session.inAdBreak = false;
+            }
+        } else if (!session.inAdBreak) {
+            session.inAdBreak = true;
+            logger.log("Ad markers on " + session.channel + (playlist.hasAdSegments() ? " (stitched ad)" : " (markers only)"));
+        }
+
+        if (playlist.hasAdSegments()) {
+            session.swappingAds = true;
+            MasterPlaylist.Variant variant = session.master.byUrl(session.variantUrlFor(url));
+            long searchStart = clock.getAsLong();
+            BackupStreamFinder.Result backup = variant == null ? null : backups.find(session, variant);
+            long searchMs = clock.getAsLong() - searchStart;
+            if (backup != null) {
+                logger.log("Serving " + backup.playerType + " " + backup.resolution + " instead (found in " + searchMs + "ms)");
+                breaks.onBlocking(qualityLabel(backup.resolution));
+                MediaPlaylist backupPlaylist = MediaPlaylist.parse(backup.playlist, backup.url);
+                return stitcher.process(backupPlaylist, backup.playlist, "backup:" + backup.playerType);
+            }
+            logger.log("No ad-free stream " + (variant == null ? "(quality unknown)" : "(searched " + searchMs + "ms)")
+                    + ", cutting the ad out");
+            breaks.onBlocking(null);
+            return stitcher.process(playlist, body, PlaylistStitcher.NATIVE);
+        }
+
+        // Ad markers can stay in the playlist a while after the ad itself; the break is over
+        // for the viewer as soon as the original stream has no ad segments left.
+        String output = stitcher.process(playlist, body, PlaylistStitcher.NATIVE);
+        if (session.swappingAds) {
+            logger.log("Ad break over on " + session.channel);
+            session.endAdSwap();
+            breaks.onBreakOver();
+        }
+        return output;
+    }
+
+    /** One line per playlist refresh for the detailed log. */
+    private static String pollSummary(StreamSession session, String url, MediaPlaylist playlist) {
+        MasterPlaylist.Variant variant = session.master.byUrl(session.variantUrlFor(url));
+        int ads = 0;
+        for (MediaPlaylist.Segment segment : playlist.segments) {
+            if (segment.isAd()) ads++;
+        }
+        return "Playlist " + session.channel + " " + (variant == null ? "?" : variant.resolution == null ? "audio" : variant.resolution)
+                + ": sequence " + playlist.mediaSequence + ", " + playlist.segments.size() + " segments, " + ads + " ads"
+                + (playlist.hasAdTags ? ", ad markers" : "") + (session.swappingAds ? ", in break" : "");
     }
 
     /** {@code 640x360} becomes {@code 360p}; audio only (no resolution) gives null. */

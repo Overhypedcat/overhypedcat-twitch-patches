@@ -7,6 +7,7 @@ import app.morphed.extension.twitch.adblock.AdBlocker;
 import app.morphed.extension.twitch.adblock.BackupStreamFinder;
 import app.morphed.extension.twitch.adblock.Http;
 import app.morphed.extension.twitch.adblock.Logger;
+import app.morphed.extension.twitch.adblock.LoggingHttp;
 import app.morphed.extension.twitch.adblock.Problem;
 import app.morphed.extension.twitch.adblock.UrlConnectionHttp;
 
@@ -41,14 +42,22 @@ public final class StreamAdsPatch {
             return AD_BLOCKER.process(url, body);
         } catch (Throwable t) {
             Log.e(TAG, "Playlist processing failed for " + url, t);
+            DebugLog.log("Playlist processing failed: " + Log.getStackTraceString(t));
             PROBLEMS.report(Problem.PROCESSING_FAILED, t.toString());
             return body;
         }
     }
 
+    /** Logcat and, while the Detailed log setting is on, the log file. */
+    static final Logger LOGGER = message -> {
+        Log.d(TAG, message);
+        DebugLog.log(message);
+    };
+
     private static AdBlocker createAdBlocker() {
-        Logger logger = message -> Log.d(TAG, message);
-        Http http = new UrlConnectionHttp();
+        DebugLog.resumeIfEnabled();
+        Logger logger = LOGGER;
+        Http http = new LoggingHttp(new UrlConnectionHttp(), logger, System::currentTimeMillis);
         BackupStreamFinder backups = new BackupStreamFinder(
                 http, new AccessTokenClient(http), logger, System::currentTimeMillis, PROBLEMS);
         AdBlocker.BreakListener breaks = new AdBlocker.BreakListener() {

@@ -33,6 +33,12 @@ When Twitch changes something and ads may get through, the app shows a short mes
 
 Details are in logcat under the tag `TwitchMorphed`.
 
+## Detailed log
+
+Settings, Preferences, Detailed log: while it is on, everything the ad blocker does and every connection
+of the video player (with timings) is written to `Downloads/TwitchMorphed-log-<date>.txt`. Turn it off
+to finish the file. Access tokens are cut from every logged URL.
+
 ## Development
 
 - `extensions/twitch` - the Java code that runs inside Twitch, with unit tests

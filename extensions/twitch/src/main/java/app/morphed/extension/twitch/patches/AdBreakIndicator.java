@@ -41,7 +41,11 @@ final class AdBreakIndicator {
         main.post(() -> {
             registerCallbacks();
             Activity activity = resumedActivity.get();
-            if (activity == null) return;
+            if (activity == null) {
+                DebugLog.log("Label: no screen in front, not shown");
+                return;
+            }
+            if (label == null) DebugLog.log("Label shown: " + text + " on " + activity.getClass().getSimpleName());
 
             ViewGroup decor = (ViewGroup) activity.getWindow().getDecorView();
             if (label == null || label.getContext() != activity) {
@@ -65,6 +69,7 @@ final class AdBreakIndicator {
 
     private void hideNow() {
         main.removeCallbacks(hideRunnable);
+        if (label != null) DebugLog.log("Label hidden");
         if (label != null && label.getParent() instanceof ViewGroup) {
             ((ViewGroup) label.getParent()).removeView(label);
         }

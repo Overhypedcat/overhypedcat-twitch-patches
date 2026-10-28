@@ -6,6 +6,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import android.os.SystemClock;
+
+import app.morphed.extension.twitch.adblock.RequestStats;
+import app.morphed.extension.twitch.hls.UrlKey;
+import app.morphed.extension.twitch.patches.DebugLog;
 import app.morphed.extension.twitch.patches.StreamAdsPatch;
 
 /**
@@ -30,6 +35,8 @@ public final class MorphedHttpClient implements HttpClient {
     /** Injected at the end of {@code HttpClientFactory.create()}. */
     public static HttpClient wrap(HttpClient client) {
         if (client == null || client instanceof MorphedHttpClient) return client;
+        DebugLog.resumeIfEnabled();
+        DebugLog.log("Player HTTP client created: " + client.description());
         return new MorphedHttpClient(client);
     }
 
@@ -46,30 +53,36 @@ public final class MorphedHttpClient implements HttpClient {
     @Override
     public void execute(Request request, ResponseCallback callback) {
         String url = request.getUrl();
+        long start = SystemClock.elapsedRealtime();
         if (!StreamAdsPatch.shouldInspect(url)) {
-            delegate.execute(request, callback);
+            // Timed only while the detailed log is on, so normal playback pays nothing for it.
+            delegate.execute(request, DebugLog.isOn() ? timed(url, start, callback) : callback);
             return;
         }
         delegate.execute(request, new ResponseCallback() {
             @Override
             public void onError(Exception exception) {
+                logRequest(url, start, -1, exception);
                 callback.onError(exception);
             }
 
             @Override
             public void onResponse(Response response) {
                 if (response.getStatus() != 200) {
+                    logRequest(url, start, response.getStatus(), null);
                     callback.onResponse(response);
                     return;
                 }
                 response.readContent(new BodyCollector(request) {
                     @Override
                     void onBody(byte[] body) {
-                        EXECUTOR.execute(() -> deliver(request, response, callback, url, body));
+                        long downloaded = SystemClock.elapsedRealtime();
+                        EXECUTOR.execute(() -> deliver(request, response, callback, url, body, start, downloaded));
                     }
 
                     @Override
                     public void onError(Exception exception) {
+                        logRequest(url, start, -1, exception);
                         callback.onError(exception);
                     }
                 });
@@ -77,7 +90,9 @@ public final class MorphedHttpClient implements HttpClient {
         });
     }
 
-    private static void deliver(Request request, Response response, ResponseCallback callback, String url, byte[] body) {
+    private static void deliver(Request request, Response response, ResponseCallback callback, String url,
+                                byte[] body, long start, long downloaded) {
+        long processingStart = SystemClock.elapsedRealtime();
         byte[] output = body;
         try {
             String original = new String(body, StandardCharsets.UTF_8);
@@ -93,6 +108,38 @@ public final class MorphedHttpClient implements HttpClient {
         }
         response.setConsumer(null, new BytesConsumer(request, output));
         callback.onResponse(response);
+
+        if (DebugLog.isOn()) {
+            long end = SystemClock.elapsedRealtime();
+            RequestStats.record(end - start, true);
+            DebugLog.log("Playlist " + UrlKey.of(url) + " -> 200, download " + (downloaded - start) + "ms, waited "
+                    + (processingStart - downloaded) + "ms, processing " + (end - processingStart) + "ms, "
+                    + body.length + " -> " + output.length + " bytes" + (output == body ? "" : " (rewritten)"));
+        }
+    }
+
+    private static ResponseCallback timed(String url, long start, ResponseCallback callback) {
+        return new ResponseCallback() {
+            @Override
+            public void onError(Exception exception) {
+                logRequest(url, start, -1, exception);
+                callback.onError(exception);
+            }
+
+            @Override
+            public void onResponse(Response response) {
+                logRequest(url, start, response.getStatus(), null);
+                callback.onResponse(response);
+            }
+        };
+    }
+
+    /** One player request in the detailed log; the time is until the response headers arrived. */
+    private static void logRequest(String url, long start, int status, Exception error) {
+        if (!DebugLog.isOn()) return;
+        long ms = SystemClock.elapsedRealtime() - start;
+        RequestStats.record(ms, error == null && status < 400);
+        DebugLog.log("Player " + UrlKey.of(url) + " -> " + (error != null ? "failed: " + error : status) + " in " + ms + "ms");
     }
 
     /** Collects a response body that IVS hands out in chunks. */

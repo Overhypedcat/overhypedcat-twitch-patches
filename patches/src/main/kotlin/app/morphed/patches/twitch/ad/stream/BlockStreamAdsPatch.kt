@@ -3,8 +3,8 @@ package app.morphed.patches.twitch.ad.stream
 import app.morphe.patcher.extensions.InstructionExtensions.addInstructions
 import app.morphe.patcher.extensions.InstructionExtensions.getInstruction
 import app.morphe.patcher.patch.bytecodePatch
-import app.morphe.patcher.util.proxy.mutableTypes.MutableMethod
 import app.morphed.patches.twitch.shared.Constants.COMPATIBILITY_TWITCH
+import app.morphed.patches.twitch.shared.indicesOf
 import com.android.tools.smali.dexlib2.Opcode
 import com.android.tools.smali.dexlib2.iface.instruction.OneRegisterInstruction
 
@@ -25,7 +25,7 @@ val blockStreamAdsPatch = bytecodePatch(
 
     execute {
         HttpClientFactoryCreateFingerprint.method.apply {
-            returnIndices(Opcode.RETURN_OBJECT).forEach { returnIndex ->
+            indicesOf(Opcode.RETURN_OBJECT).forEach { returnIndex ->
                 val register = getInstruction<OneRegisterInstruction>(returnIndex).registerA
                 addInstructions(
                     returnIndex,
@@ -40,7 +40,7 @@ val blockStreamAdsPatch = bytecodePatch(
         // Remember each player so it can be nudged back to the live edge after an ad break.
         CorePlayerImplConstructorFingerprint.method.apply {
             val thisRegister = implementation!!.registerCount - parameters.size - 1
-            returnIndices(Opcode.RETURN_VOID).forEach { returnIndex ->
+            indicesOf(Opcode.RETURN_VOID).forEach { returnIndex ->
                 addInstructions(
                     returnIndex,
                     "invoke-static/range { v$thisRegister .. v$thisRegister }, " +
@@ -49,15 +49,4 @@ val blockStreamAdsPatch = bytecodePatch(
             }
         }
     }
-}
-
-/** Indices of every {@code opcode} instruction, last first so inserting code keeps them valid. */
-private fun MutableMethod.returnIndices(opcode: Opcode): List<Int> {
-    val indices = implementation!!.instructions
-        .withIndex()
-        .filter { it.value.opcode == opcode }
-        .map { it.index }
-        .reversed()
-    check(indices.isNotEmpty()) { "$name has no ${opcode.name}" }
-    return indices
 }
