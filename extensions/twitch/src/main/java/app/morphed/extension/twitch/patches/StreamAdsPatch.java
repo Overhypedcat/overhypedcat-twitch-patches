@@ -18,6 +18,13 @@ import app.morphed.extension.twitch.adblock.UrlConnectionHttp;
 public final class StreamAdsPatch {
     private static final String TAG = "TwitchMorphed";
 
+    /** Logcat and, while the Detailed log setting is on, the log file. */
+    static final Logger LOGGER = message -> {
+        Log.d(TAG, message);
+        DebugLog.log(message);
+    };
+
+    // Must come after LOGGER: static fields are set in the order they are written.
     private static final Problem.Reporter PROBLEMS = new ProblemNotifier();
     private static final AdBreakIndicator INDICATOR = new AdBreakIndicator();
     private static final AdBlocker AD_BLOCKER = createAdBlocker();
@@ -47,12 +54,6 @@ public final class StreamAdsPatch {
             return body;
         }
     }
-
-    /** Logcat and, while the Detailed log setting is on, the log file. */
-    static final Logger LOGGER = message -> {
-        Log.d(TAG, message);
-        DebugLog.log(message);
-    };
 
     private static AdBlocker createAdBlocker() {
         DebugLog.resumeIfEnabled();

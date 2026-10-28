@@ -30,6 +30,11 @@ public final class AdBlocker {
     private static final Pattern CHANNEL = Pattern.compile("/channel/hls/([^/?]+)\\.m3u8");
     private static final long SESSION_MAX_IDLE_MS = 30 * 60 * 1000;
     private static final long REASSIGNMENT_WINDOW_MS = 30 * 1000;
+    /**
+     * A playing stream refreshes its playlist about every 2 seconds. Only when it has been quiet
+     * longer than that can a new playlist URL be the same stream moved to another server.
+     */
+    private static final long MOVED_GAP_MS = 2_500;
     private static final int MAX_PREVIEW_VARIANTS = 500;
     private static final Pattern TOKEN_PARAMETER = Pattern.compile("[?&]token=([^&]+)");
     private static final Pattern PLAYER_TYPE = Pattern.compile("\"player_type\"\\s*:\\s*\"([^\"]+)\"");
@@ -127,10 +132,14 @@ public final class AdBlocker {
         return playerType != null && playerType.contains("feed");
     }
 
-    /** A live media playlist on Twitch's playlist servers, known or not. */
+    /**
+     * A live media playlist on Twitch's playlist servers, known or not: video-weaver hosts, and
+     * since 2026 hosts like {@code euc11.playlist.ttvnw.net/v1/playlist/...}.
+     */
     static boolean isLiveMediaPlaylist(String url) {
         String path = UrlKey.of(url);
-        return path.contains("video-weaver.") && path.endsWith(".m3u8");
+        if (!path.endsWith(".m3u8")) return false;
+        return path.contains("video-weaver.") || path.contains(".playlist.ttvnw.net/") || path.contains("/v1/playlist/");
     }
 
     public boolean shouldInspect(String url) {
@@ -145,27 +154,40 @@ public final class AdBlocker {
             return body;
         }
         StreamSession session = sessionsByVariant.get(UrlKey.of(url));
-        if (session == null) session = adoptReassignedPlaylist(url);
-        if (session == null) {
+        if (session != null) return onMediaPlaylist(session, url, body);
+        if (!isLiveMediaPlaylist(url)) return body;
+
+        long now = clock.getAsLong();
+        StreamSession latest = latestSession(now);
+        if (latest == null) {
+            // A live playlist with no stream it could belong to: Twitch changed how streams are loaded.
             problems.report(Problem.UNRECOGNIZED_PLAYLIST, UrlKey.of(url));
             return body;
         }
-        return onMediaPlaylist(session, url, body);
+        if (now - latest.lastSeen < MOVED_GAP_MS) {
+            // That stream is still being polled at its own URL, so this playlist belongs to another
+            // player (for example a preview): leave it alone.
+            logger.log("Leaving unrelated playlist alone: " + UrlKey.of(url));
+            return body;
+        }
+        return onMediaPlaylist(adoptMovedPlaylist(latest, url), url, body);
     }
 
-    /**
-     * Twitch can move a running stream to another playlist server. The new URL is not in the master
-     * playlist, so attach it to the quality that was playing most recently.
-     */
-    private StreamSession adoptReassignedPlaylist(String url) {
-        if (!isLiveMediaPlaylist(url)) return null;
-        long now = clock.getAsLong();
+    /** The stream polled most recently within the reassignment window, or null. */
+    private StreamSession latestSession(long now) {
         StreamSession latest = null;
         for (StreamSession session : sessionsByVariant.values()) {
             if (session.lastVariantUrl == null || now - session.lastSeen > REASSIGNMENT_WINDOW_MS) continue;
             if (latest == null || session.lastSeen > latest.lastSeen) latest = session;
         }
-        if (latest == null) return null;
+        return latest;
+    }
+
+    /**
+     * Twitch can move a running stream to another playlist server. The new URL is not in the master
+     * playlist, so it is attached to the quality that was playing, once that one has stopped being polled.
+     */
+    private StreamSession adoptMovedPlaylist(StreamSession latest, String url) {
         synchronized (latest) {
             latest.aliases.put(UrlKey.of(url), latest.lastVariantUrl);
         }

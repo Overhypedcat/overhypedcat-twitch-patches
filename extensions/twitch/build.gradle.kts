@@ -9,6 +9,9 @@ android {
         // Twitch itself requires Android 8.0, which also makes java.time available.
         minSdk = 26
     }
+
+    // Lets unit tests load the Android-facing classes (Log, Handler, ... do nothing instead of throwing).
+    testOptions.unitTests.isReturnDefaultValues = true
 }
 
 dependencies {

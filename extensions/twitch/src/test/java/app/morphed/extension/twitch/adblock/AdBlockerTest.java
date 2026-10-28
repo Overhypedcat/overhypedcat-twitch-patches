@@ -331,11 +331,33 @@ public class AdBlockerTest {
         String moved = "https://video-weaver.other.hls.ttvnw.net/v1/playlist/moved.m3u8";
         assertTrue(blocker.shouldInspect(moved));
 
+        // The old URL stopped being polled, so the new one is the same stream on another server.
+        now += 3_000;
         String out = blocker.process(moved, Playlists.media("n", 102, "llaa", true));
 
         assertTrue(out.contains(Playlists.segment("site", 104)));
         assertTrue(blocker.isKnownMediaPlaylist(moved));
         assertEquals(Collections.emptyList(), problems);
+    }
+
+    @Test
+    public void recognisesTheNewPlaylistHosts() {
+        assertTrue(AdBlocker.isLiveMediaPlaylist("https://euc11.playlist.ttvnw.net/v1/playlist/CqQH5w.m3u8"));
+        assertTrue(AdBlocker.isLiveMediaPlaylist("https://video-weaver.fra05.hls.ttvnw.net/v1/playlist/abc.m3u8"));
+        assertFalse(AdBlocker.isLiveMediaPlaylist("https://cbb007b04906.j.cloudfront.hls.ttvnw.net/v1/segment/abc.ts"));
+    }
+
+    @Test
+    public void leavesAnotherPlayersPlaylistAloneWhileTheStreamPlays() {
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+        String other = "https://euc11.playlist.ttvnw.net/v1/playlist/other.m3u8";
+        String text = Playlists.media("o", 500, "llaa", true);
+
+        now += 1_000;
+        assertSame(text, blocker.process(other, text));
+        assertFalse(blocker.isKnownMediaPlaylist(other));
+        assertEquals(Collections.emptyList(), problems);
+        assertEquals(Collections.emptyList(), notices);
     }
 
     @Test
