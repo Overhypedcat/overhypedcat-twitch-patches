@@ -33,6 +33,13 @@ When Twitch changes something and ads may get through, the app shows a short mes
 
 Details are in logcat under the tag `TwitchMorphed`.
 
+## Block ad servers
+
+Banner, display and in-feed ads come from Twitch's own ad server (`edge.ads.twitch.tv`). This patch
+refuses it and Twitch's tracking servers inside the app, and looks up every other server over encrypted
+DNS (Cloudflare, then Google), so the app does not depend on the phone's DNS. If encrypted DNS fails,
+the phone's DNS is used.
+
 ## Detailed log
 
 Settings, Preferences, Detailed log: while it is on, everything the ad blocker does and every connection

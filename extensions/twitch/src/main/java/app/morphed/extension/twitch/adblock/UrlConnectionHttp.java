@@ -14,7 +14,15 @@ import java.util.Map;
  * through the player's client and its rewriting.
  */
 public final class UrlConnectionHttp implements Http {
-    private static final int TIMEOUT_MS = 4_000;
+    private final int timeoutMs;
+
+    public UrlConnectionHttp() {
+        this(4_000);
+    }
+
+    public UrlConnectionHttp(int timeoutMs) {
+        this.timeoutMs = timeoutMs;
+    }
 
     @Override
     public Response get(String url, Map<String, String> headers) throws IOException {
@@ -26,12 +34,12 @@ public final class UrlConnectionHttp implements Http {
         return request("POST", url, headers, body);
     }
 
-    private static Response request(String method, String url, Map<String, String> headers, String body) throws IOException {
+    private Response request(String method, String url, Map<String, String> headers, String body) throws IOException {
         HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
         try {
             connection.setRequestMethod(method);
-            connection.setConnectTimeout(TIMEOUT_MS);
-            connection.setReadTimeout(TIMEOUT_MS);
+            connection.setConnectTimeout(timeoutMs);
+            connection.setReadTimeout(timeoutMs);
             for (Map.Entry<String, String> header : headers.entrySet()) {
                 connection.setRequestProperty(header.getKey(), header.getValue());
             }
