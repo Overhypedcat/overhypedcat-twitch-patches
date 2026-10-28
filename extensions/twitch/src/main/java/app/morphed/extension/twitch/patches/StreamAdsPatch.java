@@ -58,9 +58,9 @@ public final class StreamAdsPatch {
             }
 
             @Override
-            public void onBreakOver(boolean swapped) {
+            public void onBreakOver() {
                 INDICATOR.hide();
-                if (swapped) PlayerRefresher.refreshPlayingPlayers();
+                PlayerRefresher.refreshPlayingPlayers();
             }
         };
         return new AdBlocker(backups, logger, System::currentTimeMillis, breaks, PROBLEMS);
