@@ -30,7 +30,7 @@ public final class DohResolver {
     private static final long MIN_TTL_MS = 30_000;
     private static final long MAX_TTL_MS = 600_000;
     /** A provider that failed is skipped for this long, so a dead provider never slows every lookup. */
-    private static final long PROVIDER_COOLDOWN_MS = 60_000;
+    private static final long PROVIDER_COOLDOWN_MS = 15_000;
 
     private static final Pattern ANSWER_OBJECT = Pattern.compile("\\{[^{}]*\\}");
     private static final Pattern TYPE = Pattern.compile("\"type\"\\s*:\\s*(\\d+)");

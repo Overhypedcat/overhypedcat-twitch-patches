@@ -4,6 +4,8 @@ import android.util.Log;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import app.morphed.extension.twitch.adblock.UrlConnectionHttp;
 import app.morphed.extension.twitch.dns.AppDns;
@@ -16,10 +18,15 @@ import app.morphed.extension.twitch.dns.DohResolver;
 public final class TwitchDns {
     private static final String TAG = "TwitchMorphed";
 
+    private static final ExecutorService LOOKUPS = Executors.newCachedThreadPool(runnable -> {
+        Thread thread = new Thread(runnable, "TwitchMorphed-dns");
+        thread.setDaemon(true);
+        return thread;
+    });
     private static final AppDns DNS = new AppDns(
             InetAddress::getAllByName,
             new DohResolver(new UrlConnectionHttp(2_000), StreamAdsPatch.LOGGER, System::currentTimeMillis),
-            StreamAdsPatch.LOGGER);
+            LOOKUPS, StreamAdsPatch.LOGGER);
 
     private TwitchDns() {
     }

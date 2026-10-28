@@ -1,5 +1,6 @@
 package app.morphed.extension.twitch.dns;
 
+import org.junit.After;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -7,9 +8,12 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import app.morphed.extension.twitch.adblock.Http;
 import app.morphed.extension.twitch.adblock.Logger;
@@ -33,8 +37,9 @@ public class DnsTest {
 
     /** Answers by URL substring; throws for anything unknown, like an unreachable provider. */
     private static final class FakeHttp implements Http {
-        final Map<String, String> answers = new LinkedHashMap<>();
-        final List<String> requests = new ArrayList<>();
+        final Map<String, String> answers = Collections.synchronizedMap(new LinkedHashMap<>());
+        // Lookups run on several threads.
+        final List<String> requests = Collections.synchronizedList(new ArrayList<>());
 
         @Override
         public Response get(String url, Map<String, String> headers) throws IOException {
@@ -139,25 +144,90 @@ public class DnsTest {
         assertTrue(http.requests.get(requests).contains("8.8.8.8"));
     }
 
-    @Test
-    public void appDnsBlocksUsesEncryptedDnsAndFallsBackToThePhone() throws Exception {
-        List<String> phoneLookups = new ArrayList<>();
-        InetAddress phoneAddress = InetAddress.getByAddress("x", new byte[]{10, 0, 0, 1});
-        AppDns dns = new AppDns(host -> {
-            phoneLookups.add(host);
-            return new InetAddress[]{phoneAddress};
-        }, doh, Logger.NONE);
-        http.answers.put("name=gql.twitch.tv", answer(1, "151.101.2.167"));
+    private final ExecutorService executor = Executors.newCachedThreadPool();
 
+    @After
+    public void tearDown() {
+        executor.shutdownNow();
+    }
+
+    private static InetAddress address(int a, int b, int c, int d) throws UnknownHostException {
+        return InetAddress.getByAddress(new byte[]{(byte) a, (byte) b, (byte) c, (byte) d});
+    }
+
+    /** A phone DNS that answers after {@code delayMs} with {@code answer}, or fails when it is null. */
+    private AppDns appDns(long delayMs, InetAddress answer) {
+        return new AppDns(host -> {
+            try {
+                Thread.sleep(delayMs);
+            } catch (InterruptedException e) {
+                throw new UnknownHostException("cancelled");
+            }
+            if (answer == null) throw new UnknownHostException(host);
+            return new InetAddress[]{answer};
+        }, doh, executor, Logger.NONE);
+    }
+
+    @Test
+    public void refusesBlockedServersWithoutAnyLookup() {
         try {
-            dns.lookup("edge.ads.twitch.tv");
+            appDns(0, null).lookup("edge.ads.twitch.tv");
             fail();
         } catch (UnknownHostException expected) {
             assertTrue(expected.getMessage().contains("Blocked"));
         }
-        assertEquals("151.101.2.167", dns.lookup("gql.twitch.tv")[0].getHostAddress());
-        assertEquals(phoneAddress, dns.lookup("unreachable.example.com")[0]);
-        assertEquals(phoneAddress, dns.lookup("10.0.0.1")[0]);
-        assertEquals(Arrays.asList("unreachable.example.com", "10.0.0.1"), phoneLookups);
+        assertTrue(http.requests.isEmpty());
+    }
+
+    @Test
+    public void slowPhoneDnsLosesToEncryptedDns() throws Exception {
+        http.answers.put("name=gql.twitch.tv", answer(1, "151.101.2.167"));
+
+        assertEquals("151.101.2.167", appDns(5_000, address(10, 0, 0, 1)).lookup("gql.twitch.tv")[0].getHostAddress());
+    }
+
+    @Test
+    public void unreachableEncryptedDnsDoesNotDelayThePhoneAnswer() throws Exception {
+        long start = System.nanoTime();
+        InetAddress[] addresses = appDns(0, address(10, 0, 0, 1)).lookup("gql.twitch.tv");
+
+        assertEquals("10.0.0.1", addresses[0].getHostAddress());
+        assertTrue(System.nanoTime() - start < 1_000_000_000L);
+    }
+
+    @Test
+    public void blockedAnswerFromPhoneDnsWaitsForEncryptedDns() throws Exception {
+        http.answers.put("name=8a2de3.rufio.hls.live-video.net", answer(1, "52.58.77.213"));
+
+        InetAddress[] addresses = appDns(0, InetAddress.getByName("::")).lookup("8a2de3.rufio.hls.live-video.net");
+
+        assertEquals("52.58.77.213", addresses[0].getHostAddress());
+    }
+
+    @Test
+    public void phoneFailureFallsToEncryptedDnsAndBothFailingFails() throws Exception {
+        http.answers.put("name=gql.twitch.tv", answer(1, "151.101.2.167"));
+        assertEquals("151.101.2.167", appDns(0, null).lookup("gql.twitch.tv")[0].getHostAddress());
+
+        try {
+            appDns(0, null).lookup("nowhere.example.com");
+            fail();
+        } catch (UnknownHostException expected) {
+            assertTrue(expected.getMessage().contains("nowhere.example.com"));
+        }
+    }
+
+    @Test
+    public void ipAddressesStayWithThePhone() throws Exception {
+        assertEquals("10.0.0.1", appDns(0, address(10, 0, 0, 1)).lookup("10.0.0.1")[0].getHostAddress());
+        assertTrue(http.requests.isEmpty());
+    }
+
+    @Test
+    public void recognisesBlockedAnswers() throws Exception {
+        assertTrue(AppDns.isSinkhole(new InetAddress[]{InetAddress.getByName("0.0.0.0")}));
+        assertTrue(AppDns.isSinkhole(new InetAddress[]{InetAddress.getByName("::")}));
+        assertTrue(AppDns.isSinkhole(new InetAddress[]{InetAddress.getByName("127.0.0.1")}));
+        assertFalse(AppDns.isSinkhole(new InetAddress[]{address(151, 101, 2, 167)}));
     }
 }
