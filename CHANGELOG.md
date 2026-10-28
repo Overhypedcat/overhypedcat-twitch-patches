@@ -1,3 +1,9 @@
+## [1.3.3](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.3.2...v1.3.3) (2026-10-28)
+
+### Bug Fixes
+
+* Only treat segments as ads while a stitched ad is announced ([e58caf1](https://github.com/Overhypedcat/overhypedcat-twitch-patches/commit/e58caf13e1953041f0ec3f6ae31a9fce08bc887f))
+
 ## [1.3.2](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.3.1...v1.3.2) (2026-10-28)
 
 ### Bug Fixes
