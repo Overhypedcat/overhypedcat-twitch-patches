@@ -1,3 +1,9 @@
+## [1.3.0](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.2.1...v1.3.0) (2026-10-28)
+
+### New Features
+
+* Block ad servers and use encrypted DNS inside the app ([7345729](https://github.com/Overhypedcat/overhypedcat-twitch-patches/commit/7345729f26184102f49afe23e4835ed2b384c0ad))
+
 ## [1.2.1](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.2.0...v1.2.1) (2026-10-28)
 
 ### Bug Fixes

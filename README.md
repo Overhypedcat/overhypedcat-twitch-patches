@@ -58,9 +58,9 @@ Commits to `dev` publish pre-releases, merges to `main` publish releases
 ## Patches
 
 <!-- PATCHES_START EXPANDED -->
-> **[v1.2.1](https://github.com/Overhypedcat/overhypedcat-twitch-patches/releases/tag/v1.2.1)**&nbsp;&nbsp;•&nbsp;&nbsp;`main`&nbsp;&nbsp;•&nbsp;&nbsp;2 patches total
+> **[v1.3.0](https://github.com/Overhypedcat/overhypedcat-twitch-patches/releases/tag/v1.3.0)**&nbsp;&nbsp;•&nbsp;&nbsp;`main`&nbsp;&nbsp;•&nbsp;&nbsp;3 patches total
 <details open>
-<summary>Twitch&nbsp;&nbsp;•&nbsp;&nbsp;2 patches</summary>
+<summary>Twitch&nbsp;&nbsp;•&nbsp;&nbsp;3 patches</summary>
 <br>
 
 **Package name:** `tv.twitch.android.app`
@@ -72,6 +72,7 @@ Commits to `dev` publish pre-releases, merges to `main` publish releases
 
 | Patch | Description | Options |
 |----------|----------------|-----------|
+| [Block ad servers](#block-ad-servers) | Blocks Twitch's banner, display and feed ads (edge.ads.twitch.tv) and its tracking servers inside the app, and looks up every other server over encrypted DNS (Cloudflare, then Google) instead of the phone's DNS, so a slow or filtering DNS cannot stall Twitch. |  |
 | [Block stream ads](#block-stream-ads) | Replaces ad-laden live playlists with ad-free ones from other player types, and strips ad segments when no clean playlist exists. |  |
 | [Detailed log setting](#detailed-log-setting) | Adds a Detailed log switch to Settings, Preferences. While it is on, a detailed log of the ad blocker and the video player's connections is written to Downloads. |  |
 
