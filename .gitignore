@@ -9,11 +9,7 @@ local.properties
 .vscode/
 *.iml
 
-# Original and patched apps (copyrighted), downloaded tools, signing key
-apk/
-dist/
-tools/
-signing/
+# Apps (copyrighted)
 *.apk
 *.apkm
 
