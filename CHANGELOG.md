@@ -1,3 +1,9 @@
+## [1.2.1](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.2.0...v1.2.1) (2026-10-28)
+
+### Bug Fixes
+
+* Ad blocking crashed on every stream in v1.2.0 (E3) ([6231de0](https://github.com/Overhypedcat/overhypedcat-twitch-patches/commit/6231de0684541ebcb7f59786b03d61d5b8f31f44))
+
 ## [1.2.0](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.1.3...v1.2.0) (2026-10-28)
 
 ### New Features
