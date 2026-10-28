@@ -6,6 +6,8 @@ import app.morphed.extension.twitch.hls.MediaPlaylist;
 import app.morphed.extension.twitch.hls.PlaylistStitcher;
 import app.morphed.extension.twitch.hls.UrlKey;
 
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
@@ -28,6 +30,9 @@ public final class AdBlocker {
     private static final Pattern CHANNEL = Pattern.compile("/channel/hls/([^/?]+)\\.m3u8");
     private static final long SESSION_MAX_IDLE_MS = 30 * 60 * 1000;
     private static final long REASSIGNMENT_WINDOW_MS = 30 * 1000;
+    private static final int MAX_PREVIEW_VARIANTS = 500;
+    private static final Pattern TOKEN_PARAMETER = Pattern.compile("[?&]token=([^&]+)");
+    private static final Pattern PLAYER_TYPE = Pattern.compile("\"player_type\"\\s*:\\s*\"([^\"]+)\"");
 
     /** Follows ad breaks, for the on-screen notice and the post-break player refresh. */
     public interface BreakListener {
@@ -37,20 +42,20 @@ public final class AdBlocker {
             }
 
             @Override
-            public void onBreakOver(boolean swapped) {
+            public void onBreakOver() {
             }
         };
 
         /**
-         * Called on every playlist poll during a break.
+         * Called on every playlist poll that has ad segments.
          *
          * @param quality the backup quality shown instead of the ad, like {@code 360p}, or null
-         *                while ads are only cut out or only their markers are removed
+         *                while the ad segments are cut out
          */
         void onBlocking(String quality);
 
-        /** @param swapped ad segments were replaced or cut out, so the player may need a refresh */
-        void onBreakOver(boolean swapped);
+        /** The ad segments are gone and the original stream plays again; the player may need a refresh. */
+        void onBreakOver();
     }
 
     private final BackupStreamFinder backups;
@@ -59,6 +64,7 @@ public final class AdBlocker {
     private final BreakListener breaks;
     private final Problem.Reporter problems;
     private final Map<String, StreamSession> sessionsByVariant = new ConcurrentHashMap<>();
+    private final Set<String> previewVariants = ConcurrentHashMap.newKeySet();
 
     public AdBlocker(BackupStreamFinder backups, Logger logger, LongSupplier clock,
                      BreakListener breaks, Problem.Reporter problems) {
@@ -93,6 +99,34 @@ public final class AdBlocker {
         return sessionsByVariant.containsKey(UrlKey.of(url));
     }
 
+    /** A quality of a stream preview, which is left alone. */
+    boolean isPreviewPlaylist(String url) {
+        return previewVariants.contains(UrlKey.of(url));
+    }
+
+    /**
+     * The player type in the access token of an usher URL, such as {@code mobile-feed}, or null.
+     * The token is URL encoded JSON in the {@code token} parameter.
+     */
+    static String tokenPlayerType(String usherUrl) {
+        Matcher token = TOKEN_PARAMETER.matcher(usherUrl);
+        if (!token.find()) return null;
+        String json;
+        try {
+            json = URLDecoder.decode(token.group(1), "UTF-8");
+        } catch (UnsupportedEncodingException | IllegalArgumentException e) {
+            return null;
+        }
+        Matcher playerType = PLAYER_TYPE.matcher(json);
+        return playerType.find() ? playerType.group(1) : null;
+    }
+
+    /** Stream previews (the home feed thumbnails that play) request their token as a feed player. */
+    static boolean isPreview(String usherUrl) {
+        String playerType = tokenPlayerType(usherUrl);
+        return playerType != null && playerType.contains("feed");
+    }
+
     /** A live media playlist on Twitch's playlist servers, known or not. */
     static boolean isLiveMediaPlaylist(String url) {
         String path = UrlKey.of(url);
@@ -100,7 +134,8 @@ public final class AdBlocker {
     }
 
     public boolean shouldInspect(String url) {
-        return url != null && (isMasterPlaylist(url) || isKnownMediaPlaylist(url) || isLiveMediaPlaylist(url));
+        if (url == null || isPreviewPlaylist(url)) return false;
+        return isMasterPlaylist(url) || isKnownMediaPlaylist(url) || isLiveMediaPlaylist(url);
     }
 
     /** Returns the playlist to hand to the player in place of {@code body}. */
@@ -148,6 +183,13 @@ public final class AdBlocker {
 
         String channel = matcher.group(1).toLowerCase();
         MasterPlaylist master = MasterPlaylist.parse(body);
+        if (isPreview(url)) {
+            // Previews have no ads to block; remember their qualities only to leave them alone.
+            if (previewVariants.size() > MAX_PREVIEW_VARIANTS) previewVariants.clear();
+            for (MasterPlaylist.Variant variant : master.variants) previewVariants.add(UrlKey.of(variant.url));
+            logger.log("Ignoring preview of " + channel);
+            return;
+        }
         StreamSession session = new StreamSession(channel, url, master, now);
         for (MasterPlaylist.Variant variant : master.variants) {
             sessionsByVariant.put(UrlKey.of(variant.url), session);
@@ -167,24 +209,17 @@ public final class AdBlocker {
                 if (!suspicious.isEmpty()) {
                     problems.report(Problem.UNRECOGNIZED_AD_MARKERS, String.join(", ", suspicious));
                 }
-                boolean wasInBreak = session.inAdBreak;
-                boolean swapped = session.swappedThisBreak;
-                if (wasInBreak) {
-                    logger.log("Ad break over on " + session.channel);
-                    session.endAdBreak();
+                if (session.inAdBreak) {
+                    logger.log("Ad markers gone on " + session.channel);
+                    session.inAdBreak = false;
                 }
-                String output = stitcher.process(playlist, body, PlaylistStitcher.NATIVE);
-                if (wasInBreak) breaks.onBreakOver(swapped);
-                return output;
-            }
-
-            if (!session.inAdBreak) {
+            } else if (!session.inAdBreak) {
                 session.inAdBreak = true;
-                logger.log("Ad break on " + session.channel + (playlist.hasAdSegments() ? " (stitched)" : " (markers only)"));
+                logger.log("Ad markers on " + session.channel + (playlist.hasAdSegments() ? " (stitched ad)" : " (markers only)"));
             }
 
             if (playlist.hasAdSegments()) {
-                session.swappedThisBreak = true;
+                session.swappingAds = true;
                 MasterPlaylist.Variant variant = session.master.byUrl(session.variantUrlFor(url));
                 BackupStreamFinder.Result backup = variant == null ? null : backups.find(session, variant);
                 if (backup != null) {
@@ -192,9 +227,19 @@ public final class AdBlocker {
                     MediaPlaylist backupPlaylist = MediaPlaylist.parse(backup.playlist, backup.url);
                     return stitcher.process(backupPlaylist, backup.playlist, "backup:" + backup.playerType);
                 }
+                breaks.onBlocking(null);
+                return stitcher.process(playlist, body, PlaylistStitcher.NATIVE);
             }
-            breaks.onBlocking(null);
-            return stitcher.process(playlist, body, PlaylistStitcher.NATIVE);
+
+            // Ad markers can stay in the playlist a while after the ad itself; the break is over
+            // for the viewer as soon as the original stream has no ad segments left.
+            String output = stitcher.process(playlist, body, PlaylistStitcher.NATIVE);
+            if (session.swappingAds) {
+                logger.log("Ad break over on " + session.channel);
+                session.endAdSwap();
+                breaks.onBreakOver();
+            }
+            return output;
         }
     }
 

@@ -23,9 +23,10 @@ final class StreamSession {
     final Map<String, BackupStreamFinder.Result> backupResults = new HashMap<>();
     final Map<String, Long> failedPlayerTypes = new HashMap<>();
 
+    /** The playlist carries ad markers (with or without ad segments). */
     boolean inAdBreak;
-    /** Ad segments were replaced or cut out during the current break. */
-    boolean swappedThisBreak;
+    /** Ad segments are being replaced or cut out. */
+    boolean swappingAds;
     long lastSeen;
     /** The quality (master playlist URL) polled most recently. */
     String lastVariantUrl;
@@ -56,9 +57,8 @@ final class StreamSession {
         return stitcher;
     }
 
-    void endAdBreak() {
-        inAdBreak = false;
-        swappedThisBreak = false;
+    void endAdSwap() {
+        swappingAds = false;
         backupResults.clear();
         failedPlayerTypes.clear();
     }

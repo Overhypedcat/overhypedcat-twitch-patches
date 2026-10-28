@@ -39,9 +39,9 @@ public class AdBlockerTest {
             }
 
             @Override
-            public void onBreakOver(boolean swapped) {
+            public void onBreakOver() {
                 notices.add("over");
-                if (swapped) refreshes++;
+                refreshes++;
             }
         };
         blocker = new AdBlocker(finder, Logger.NONE, () -> now, breaks, reporter);
@@ -149,6 +149,50 @@ public class AdBlockerTest {
         blocker.process(NATIVE_1080, Playlists.media("n", 106, "llll", false));
 
         assertEquals(Arrays.asList("blocking 1080p", "over"), notices);
+    }
+
+    @Test
+    public void breakEndsWhenAdSegmentsAreGoneEvenIfMarkersLinger() {
+        backupHasAds("site", false);
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+        blocker.process(NATIVE_1080, Playlists.media("n", 102, "llaa", true));
+
+        String out = blocker.process(NATIVE_1080, Playlists.media("n", 106, "llll", true));
+
+        assertEquals(Arrays.asList("blocking 1080p", "over"), notices);
+        assertTrue(out.contains(Playlists.segment("n", 109)));
+        assertFalse(out.contains("weaver.example/site"));
+    }
+
+    @Test
+    public void markersWithoutAdSegmentsShowNoNotice() {
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+        blocker.process(NATIVE_1080, Playlists.media("n", 101, "llll", true));
+        blocker.process(NATIVE_1080, Playlists.media("n", 102, "llll", false));
+
+        assertEquals(Collections.emptyList(), notices);
+    }
+
+    @Test
+    public void streamPreviewsAreLeftAlone() {
+        String previewMaster = "https://usher.ttvnw.net/api/v2/channel/hls/other.m3u8?allow_source=true"
+                + "&token=%7B%22channel%22%3A%22other%22%2C%22player_type%22%3A%22mobile-feed%22%7D&sig=s";
+        String previewVariant = "https://video-weaver.example.hls.ttvnw.net/v1/playlist/preview.m3u8";
+        blocker.process(previewMaster, Playlists.master(previewVariant));
+
+        assertFalse(blocker.shouldInspect(previewVariant));
+        assertFalse(blocker.isUnrecognizedLivePlaylist(previewVariant));
+        assertTrue(http.requests.isEmpty());
+        assertEquals(Collections.emptyList(), notices);
+    }
+
+    @Test
+    public void readsPlayerTypeFromToken() {
+        assertEquals("mobile-feed", AdBlocker.tokenPlayerType(
+                "https://usher.ttvnw.net/x.m3u8?a=1&token=%7B%22player_type%22%3A%22mobile-feed%22%7D&sig=s"));
+        assertEquals(null, AdBlocker.tokenPlayerType(MASTER_URL));
+        assertFalse(AdBlocker.isPreview(
+                "https://usher.ttvnw.net/x.m3u8?token=%7B%22player_type%22%3A%22site%22%7D"));
     }
 
     @Test
