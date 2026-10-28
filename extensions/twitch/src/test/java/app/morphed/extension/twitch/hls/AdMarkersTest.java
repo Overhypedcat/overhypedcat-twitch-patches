@@ -48,6 +48,23 @@ public class AdMarkersTest {
     }
 
     @Test
+    public void lingeringQuartileBeaconIsNotSuspicious() {
+        String text = "#EXTM3U\n#EXT-X-DATERANGE:ID=\"q\",CLASS=\"twitch-ad-quartile\",START-DATE=\"2026-10-28T12:00:00Z\","
+                + "X-TV-TWITCH-AD-QUARTILE=\"2\",X-TV-TWITCH-AD-URL=\"https://ads.example\"\n";
+
+        assertTrue(AdMarkers.suspiciousMarkers(text).isEmpty());
+        assertFalse(AdMarkers.hasAdTags(text));
+        assertTrue(AdMarkers.isAdTagLine(text.split("\n")[1]));
+    }
+
+    @Test
+    public void adClassesMatchWhereverClassStandsInTheLine() {
+        assertTrue(AdMarkers.hasAdTags("#EXT-X-DATERANGE:ID=\"m\",CLASS=\"twitch-maf-ad\",START-DATE=\"2026-10-28T12:00:00Z\""));
+        assertTrue(AdMarkers.hasAdTags("#EXT-X-DATERANGE:CLASS=\"twitch-trigger\",ID=\"t\""));
+        assertTrue(AdMarkers.hasAdTags("#EXT-X-DATERANGE:ID=\"t\",CLASS=\"twitch-trigger\""));
+    }
+
+    @Test
     public void ordinaryPlaylistHasNoSuspiciousMarkers() {
         assertTrue(AdMarkers.suspiciousMarkers(Playlists.media("n", 100, "llll", false)
                 + "#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"x\"\n").isEmpty());
