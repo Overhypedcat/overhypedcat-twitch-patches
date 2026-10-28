@@ -1,3 +1,9 @@
+## [1.2.0](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.1.3...v1.2.0) (2026-10-28)
+
+### New Features
+
+* Detailed log switch in Settings, Preferences ([ca0b2e7](https://github.com/Overhypedcat/overhypedcat-twitch-patches/commit/ca0b2e7c6d88225204c0825e3da85121f21d9a07))
+
 ## [1.1.3](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.1.2...v1.1.3) (2026-10-28)
 
 ### Bug Fixes
