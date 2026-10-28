@@ -1,3 +1,9 @@
+## [1.1.3](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.1.2...v1.1.3) (2026-10-28)
+
+### Bug Fixes
+
+* Stop flooding Twitch with requests when no ad-free stream exists ([7891ea2](https://github.com/Overhypedcat/overhypedcat-twitch-patches/commit/7891ea2380b3192995d2984da19824603cb0ff9a))
+
 ## [1.1.2](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.1.1...v1.1.2) (2026-10-28)
 
 ### Bug Fixes
