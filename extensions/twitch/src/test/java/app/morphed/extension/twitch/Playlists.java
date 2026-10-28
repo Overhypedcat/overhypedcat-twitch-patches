@@ -48,6 +48,15 @@ public final class Playlists {
         return out.toString();
     }
 
+    /** The same playlist with fMP4 segments: an EXT-X-MAP init segment before the first segment. */
+    public static String withInitSegment(String playlist, String prefix) {
+        return playlist.replace("#EXT-X-TARGETDURATION:6\n", "#EXT-X-TARGETDURATION:6\n" + map(prefix) + "\n");
+    }
+
+    public static String map(String prefix) {
+        return "#EXT-X-MAP:URI=\"https://edge.example/" + prefix + "/init.mp4\"";
+    }
+
     public static String segment(String prefix, long sequence) {
         return "https://edge.example/" + prefix + "/" + sequence + ".ts";
     }

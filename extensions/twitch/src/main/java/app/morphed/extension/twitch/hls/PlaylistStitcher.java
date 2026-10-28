@@ -22,6 +22,11 @@ public final class PlaylistStitcher {
     public static final String NATIVE = "native";
 
     private static final int MAX_REMEMBERED_SEGMENTS = 600;
+    /**
+     * Polls in a row where a source had live segments but all were held back as already played.
+     * After this many the time check is dropped: a source whose clock lags must not stall playback forever.
+     */
+    private static final int MAX_EMPTY_POLLS = 3;
 
     private final Map<String, Long> sequenceByUri = new HashMap<>();
     private final TreeSet<Long> discontinuities = new TreeSet<>();
@@ -35,6 +40,7 @@ public final class PlaylistStitcher {
     private long discontinuityBase;
     private long discontinuityBaseSequence;
     private String lastOutput;
+    private int emptyPolls;
 
     public synchronized boolean isRewriting() {
         return rewriting;
@@ -70,7 +76,8 @@ public final class PlaylistStitcher {
 
             Long sequence = sequenceByUri.get(segment.uri);
             if (sequence == null) {
-                if (segment.programDateTime != MediaPlaylist.UNKNOWN_TIME
+                if (emptyPolls < MAX_EMPTY_POLLS
+                        && segment.programDateTime != MediaPlaylist.UNKNOWN_TIME
                         && lastProgramDateTime != MediaPlaylist.UNKNOWN_TIME
                         && segment.programDateTime <= lastProgramDateTime) {
                     // Same moment of the stream was already served from another source.
@@ -105,13 +112,23 @@ public final class PlaylistStitcher {
 
         if (window.isEmpty()) {
             // Nothing new to play yet: repeat the last playlist so the player keeps waiting.
+            // Only count polls where live content was held back by the time check, not pure ad polls.
+            if (!playlist.segments.isEmpty() && hasLiveSegment(playlist)) emptyPolls++;
             if (lastOutput != null) return lastOutput;
             return render(playlist, window, windowSequences, false);
         }
+        emptyPolls = 0;
 
         boolean keepPrefetch = !playlist.hasAds() && reachedLastSegment;
         lastOutput = render(playlist, window, windowSequences, keepPrefetch);
         return lastOutput;
+    }
+
+    private static boolean hasLiveSegment(MediaPlaylist playlist) {
+        for (MediaPlaylist.Segment segment : playlist.segments) {
+            if (!segment.isAd()) return true;
+        }
+        return false;
     }
 
     private void remember(MediaPlaylist playlist) {
@@ -164,9 +181,16 @@ public final class PlaylistStitcher {
             out.append("#EXT-X-DISCONTINUITY-SEQUENCE:").append(discontinuitySequence).append('\n');
         }
 
+        String map = null;
         for (int i = 0; i < window.size(); i++) {
             MediaPlaylist.Segment segment = window.get(i);
             if (discontinuities.contains(sequences.get(i))) out.append("#EXT-X-DISCONTINUITY\n");
+            // The init segment must come before the first segment that uses it, and again when a
+            // switch to another source brings a different one.
+            if (segment.map != null && !segment.map.equals(map)) {
+                map = segment.map;
+                out.append(map).append('\n');
+            }
             for (String tag : segment.tags) {
                 if (tag.startsWith("#EXT-X-DISCONTINUITY") || tag.startsWith("#EXT-X-PART:")) continue;
                 if (AdMarkers.isAdTagLine(tag)) continue;

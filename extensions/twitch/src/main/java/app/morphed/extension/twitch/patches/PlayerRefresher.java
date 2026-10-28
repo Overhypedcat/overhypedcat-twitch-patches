@@ -20,6 +20,8 @@ import java.util.WeakHashMap;
 public final class PlayerRefresher {
     private static final String TAG = "TwitchMorphed";
     private static final long PLAY_DELAY_MS = 150;
+    /** Let the player pick up the first playlist after the break before nudging it. */
+    private static final long REFRESH_DELAY_MS = 1_000;
 
     private static final Map<Player, Boolean> PLAYERS = Collections.synchronizedMap(new WeakHashMap<>());
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
@@ -33,14 +35,16 @@ public final class PlayerRefresher {
     }
 
     public static void refreshPlayingPlayers() {
-        MAIN.post(() -> {
+        MAIN.postDelayed(() -> {
             List<Player> players;
             synchronized (PLAYERS) {
                 players = new ArrayList<>(PLAYERS.keySet());
             }
             for (Player player : players) {
                 try {
-                    if (player.getState() != Player.State.PLAYING) continue;
+                    // Buffering players are nudged too: a stall right after the switch is what this fixes.
+                    Player.State state = player.getState();
+                    if (state != Player.State.PLAYING && state != Player.State.BUFFERING) continue;
                     player.pause();
                     MAIN.postDelayed(player::play, PLAY_DELAY_MS);
                     Log.d(TAG, "Refreshed player after ad break");
@@ -48,6 +52,6 @@ public final class PlayerRefresher {
                     Log.e(TAG, "Player refresh failed", t);
                 }
             }
-        });
+        }, REFRESH_DELAY_MS);
     }
 }

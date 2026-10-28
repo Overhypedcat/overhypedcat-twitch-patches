@@ -1,10 +1,13 @@
 package app.morphed.extension.twitch.hls;
 
+import java.net.URI;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * A live media playlist split into header, segments and trailing tags.
@@ -16,6 +19,8 @@ public final class MediaPlaylist {
         /** Tag lines that belong to this segment, in order, including EXTINF. */
         public final List<String> tags;
         public final String uri;
+        /** The EXT-X-MAP (init segment) line in effect for this segment, or null. */
+        public final String map;
         public final long sequence;
         public final boolean live;
         public final boolean discontinuity;
@@ -24,9 +29,10 @@ public final class MediaPlaylist {
 
         private final boolean ad;
 
-        Segment(List<String> tags, String uri, long sequence, boolean liveTitlesInUse) {
+        Segment(List<String> tags, String uri, String map, long sequence, boolean liveTitlesInUse) {
             this.tags = Collections.unmodifiableList(tags);
             this.uri = uri;
+            this.map = map;
             this.sequence = sequence;
 
             boolean live = false;
@@ -86,14 +92,24 @@ public final class MediaPlaylist {
     }
 
     public static MediaPlaylist parse(String text) {
+        return parse(text, null);
+    }
+
+    /**
+     * @param baseUrl URL the playlist was downloaded from; relative URIs are made absolute against
+     *                it so the playlist can be served from another URL. Null keeps URIs as they are.
+     */
+    public static MediaPlaylist parse(String text, String baseUrl) {
         List<String> header = new ArrayList<>();
         List<List<String>> segmentTags = new ArrayList<>();
         List<String> segmentUris = new ArrayList<>();
+        List<String> segmentMaps = new ArrayList<>();
         List<String> trailer = new ArrayList<>();
         List<String> pending = new ArrayList<>();
         long mediaSequence = 0;
         long discontinuitySequence = 0;
         boolean inSegments = false;
+        String map = null;
 
         for (String rawLine : text.split("\r?\n")) {
             String line = rawLine.trim();
@@ -103,9 +119,14 @@ public final class MediaPlaylist {
                 mediaSequence = parseLong(line.substring("#EXT-X-MEDIA-SEQUENCE:".length()), 0);
             } else if (line.startsWith("#EXT-X-DISCONTINUITY-SEQUENCE:")) {
                 discontinuitySequence = parseLong(line.substring("#EXT-X-DISCONTINUITY-SEQUENCE:".length()), 0);
+            } else if (line.startsWith("#EXT-X-MAP")) {
+                // Applies to every following segment, so it is tracked per segment instead of as a tag.
+                map = resolveUriAttribute(line, baseUrl);
             } else if (line.startsWith("#")) {
                 if (isTrailerTag(line)) {
-                    trailer.add(line);
+                    trailer.add(line.startsWith("#EXT-X-TWITCH-PREFETCH:")
+                            ? "#EXT-X-TWITCH-PREFETCH:" + resolve(baseUrl, line.substring("#EXT-X-TWITCH-PREFETCH:".length()))
+                            : resolveUriAttribute(line, baseUrl));
                 } else if (inSegments || isSegmentTag(line)) {
                     inSegments = true;
                     pending.add(line);
@@ -114,7 +135,8 @@ public final class MediaPlaylist {
                 }
             } else {
                 segmentTags.add(new ArrayList<>(pending));
-                segmentUris.add(line);
+                segmentUris.add(resolve(baseUrl, line));
+                segmentMaps.add(map);
                 pending.clear();
                 inSegments = true;
             }
@@ -126,10 +148,29 @@ public final class MediaPlaylist {
         boolean liveTitlesInUse = hasAdTags || text.contains(",live");
         List<Segment> segments = new ArrayList<>(segmentUris.size());
         for (int i = 0; i < segmentUris.size(); i++) {
-            segments.add(new Segment(segmentTags.get(i), segmentUris.get(i), mediaSequence + i, liveTitlesInUse));
+            segments.add(new Segment(segmentTags.get(i), segmentUris.get(i), segmentMaps.get(i),
+                    mediaSequence + i, liveTitlesInUse));
         }
 
         return new MediaPlaylist(header, segments, trailer, mediaSequence, discontinuitySequence, hasAdTags);
+    }
+
+    private static final Pattern URI_ATTRIBUTE = Pattern.compile("URI=\"([^\"]*)\"");
+
+    private static String resolveUriAttribute(String line, String baseUrl) {
+        if (baseUrl == null) return line;
+        Matcher matcher = URI_ATTRIBUTE.matcher(line);
+        if (!matcher.find()) return line;
+        return line.substring(0, matcher.start(1)) + resolve(baseUrl, matcher.group(1)) + line.substring(matcher.end(1));
+    }
+
+    private static String resolve(String baseUrl, String uri) {
+        if (baseUrl == null || uri.startsWith("http://") || uri.startsWith("https://")) return uri;
+        try {
+            return URI.create(baseUrl).resolve(uri).toString();
+        } catch (IllegalArgumentException e) {
+            return uri;
+        }
     }
 
     private static boolean isSegmentTag(String line) {
@@ -139,7 +180,6 @@ public final class MediaPlaylist {
                 || line.startsWith("#EXT-X-DATERANGE")
                 || line.startsWith("#EXT-X-BYTERANGE")
                 || line.startsWith("#EXT-X-KEY")
-                || line.startsWith("#EXT-X-MAP")
                 || line.startsWith("#EXT-X-CUE")
                 || line.startsWith("#EXT-X-SCTE35")
                 || line.startsWith("#EXT-X-PART:")

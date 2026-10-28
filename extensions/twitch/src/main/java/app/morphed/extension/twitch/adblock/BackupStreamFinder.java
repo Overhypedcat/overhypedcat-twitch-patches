@@ -6,29 +6,44 @@ import app.morphed.extension.twitch.hls.UrlKey;
 
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
+import java.net.URI;
 import java.net.URLEncoder;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.LongSupplier;
 
 /**
  * Finds an ad-free media playlist for the same channel and quality by requesting the stream
- * as another player type. Port of vaft's backup stream search.
+ * as other player types. Port of vaft's backup stream search, but all types are tried at once
+ * so opening a channel during an ad does not wait on them one by one.
  */
 public final class BackupStreamFinder {
     public static final class Result {
         public final String playerType;
         public final String playlist;
+        /** Where the playlist came from; its relative URIs resolve against this. */
+        public final String url;
+        /** For example {@code 640x360}, or null for audio only. */
+        public final String resolution;
 
-        Result(String playerType, String playlist) {
+        Result(String playerType, String playlist, String url, String resolution) {
             this.playerType = playerType;
             this.playlist = playlist;
+            this.url = url;
+            this.resolution = resolution;
         }
     }
 
-    /** Source quality types first, then 360p autoplay as the last resort, as in vaft. */
+    /** Preference order: source quality types first, then 360p autoplay as the last resort, as in vaft. */
     static final List<String> PLAYER_TYPES = Collections.unmodifiableList(
             Arrays.asList("site", "popout", "mobile_web", "embed", "autoplay"));
 
@@ -36,13 +51,26 @@ public final class BackupStreamFinder {
     /** The player waits on our answer, so give up well before its 10 second request timeout. */
     private static final long SEARCH_BUDGET_MS = 6_000;
 
+    private static final ExecutorService EXECUTOR = Executors.newCachedThreadPool(runnable -> {
+        Thread thread = new Thread(runnable, "TwitchMorphed-backup");
+        thread.setDaemon(true);
+        return thread;
+    });
+
+    /** Outcome of trying one player type, computed off the session lock and applied afterwards. */
+    private static final class Attempt {
+        /** Master playlist to keep for next time, or null to forget the cached one. */
+        String master;
+        boolean failed;
+        String error;
+        Result result;
+    }
+
     private final Http http;
     private final AccessTokenClient tokens;
     private final Logger logger;
     private final LongSupplier clock;
     private final Problem.Reporter problems;
-    /** Why the last backup master playlist could not be fetched. */
-    private String lastError;
 
     public BackupStreamFinder(Http http, AccessTokenClient tokens, Logger logger, LongSupplier clock, Problem.Reporter problems) {
         this.http = http;
@@ -55,95 +83,99 @@ public final class BackupStreamFinder {
     /** A clean playlist for {@code target}, or null when every player type has ads too. */
     Result find(StreamSession session, MasterPlaylist.Variant target) {
         String key = UrlKey.of(target.url);
-        String committedUrl = session.backupMediaUrls.get(key);
-        if (committedUrl != null) {
-            String playlist = fetchCleanPlaylist(committedUrl);
-            if (playlist != null) return new Result(session.backupPlayerType, playlist);
-            session.backupMediaUrls.remove(key);
+        Result committed = session.backupResults.get(key);
+        if (committed != null) {
+            String playlist = fetchCleanPlaylist(committed.url);
+            if (playlist != null) return new Result(committed.playerType, playlist, committed.url, committed.resolution);
+            session.backupResults.remove(key);
         }
 
-        long deadline = clock.getAsLong() + SEARCH_BUDGET_MS;
-        int tried = 0;
-        int failed = 0;
-        for (String playerType : orderedPlayerTypes(session)) {
-            if (clock.getAsLong() > deadline) {
-                logger.log("Backup search ran out of time");
-                break;
-            }
+        Map<String, Future<Attempt>> attempts = new LinkedHashMap<>();
+        for (String playerType : PLAYER_TYPES) {
             Long failedAt = session.failedPlayerTypes.get(playerType);
             if (failedAt != null && clock.getAsLong() - failedAt < FAILED_TYPE_RETRY_MS) continue;
-
-            tried++;
-            Result result = tryPlayerType(session, target, playerType);
-            if (result != null) return result;
-            if (session.failedPlayerTypes.containsKey(playerType)) failed++;
+            String cachedMaster = session.backupMasters.get(playerType);
+            attempts.put(playerType, EXECUTOR.submit(() -> attempt(session, cachedMaster, target, playerType)));
         }
+        if (attempts.isEmpty()) return null;
+
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SEARCH_BUDGET_MS);
+        Result best = null;
+        int failed = 0;
+        String lastError = null;
+        for (Map.Entry<String, Future<Attempt>> entry : attempts.entrySet()) {
+            String playerType = entry.getKey();
+            Attempt attempt;
+            try {
+                attempt = entry.getValue().get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+            } catch (TimeoutException e) {
+                entry.getValue().cancel(true);
+                logger.log("Backup " + playerType + " ran out of time");
+                continue;
+            } catch (InterruptedException | ExecutionException e) {
+                continue;
+            }
+
+            if (attempt.failed) {
+                session.failedPlayerTypes.put(playerType, clock.getAsLong());
+                failed++;
+                lastError = attempt.error;
+            }
+            if (attempt.master != null) session.backupMasters.put(playerType, attempt.master);
+            else session.backupMasters.remove(playerType);
+
+            // Types are visited in preference order, so the first clean one is the best quality.
+            if (best == null && attempt.result != null) best = attempt.result;
+            else if (attempt.result == null && !attempt.failed) logger.log("Backup " + playerType + " also has ads");
+        }
+
         // Every type erroring (rather than having ads) points at a changed token or usher API.
-        if (tried > 0 && failed == tried) problems.report(Problem.BACKUPS_UNAVAILABLE, lastError);
-        return null;
+        if (failed == attempts.size()) problems.report(Problem.BACKUPS_UNAVAILABLE, lastError);
+        if (best != null) {
+            session.backupResults.put(key, best);
+            logger.log("Using " + best.playerType + " playlist " + best.resolution + " for " + session.channel);
+        }
+        return best;
     }
 
-    private Result tryPlayerType(StreamSession session, MasterPlaylist.Variant target, String playerType) {
+    private Attempt attempt(StreamSession session, String cachedMaster, MasterPlaylist.Variant target, String playerType) {
+        Attempt attempt = new Attempt();
+        String master = cachedMaster;
         // A cached master playlist can go stale; when it does, retry once with a fresh token.
-        for (int attempt = 0; attempt < 2; attempt++) {
-            String master = session.backupMasters.get(playerType);
+        for (int round = 0; round < 2; round++) {
             boolean fresh = master == null;
             if (fresh) {
-                master = fetchMaster(session, playerType);
-                if (master == null) {
-                    session.failedPlayerTypes.put(playerType, clock.getAsLong());
-                    return null;
+                try {
+                    master = fetchMaster(session, playerType);
+                } catch (IOException e) {
+                    attempt.failed = true;
+                    attempt.error = playerType + ": " + e.getMessage();
+                    return attempt;
                 }
-                session.backupMasters.put(playerType, master);
             }
 
             MasterPlaylist.Variant variant = MasterPlaylist.parse(master).closestTo(target);
             if (variant != null) {
-                String playlist = fetchCleanPlaylist(variant.url);
+                String url = resolve(session.masterUrl, variant.url);
+                String playlist = fetchCleanPlaylist(url);
                 if (playlist != null) {
-                    session.backupMediaUrls.put(UrlKey.of(target.url), variant.url);
-                    session.backupPlayerType = playerType;
-                    session.preferredPlayerType = playerType;
-                    logger.log("Using " + playerType + " playlist " + variant.resolution + " for " + session.channel);
-                    return new Result(playerType, playlist);
+                    attempt.master = master;
+                    attempt.result = new Result(playerType, playlist, url, variant.resolution);
+                    return attempt;
                 }
-                logger.log("Backup " + playerType + " also has ads");
             }
-
-            session.backupMasters.remove(playerType);
+            master = null;
             if (fresh) break;
         }
-        return null;
+        return attempt;
     }
 
-    private List<String> orderedPlayerTypes(StreamSession session) {
-        List<String> types = new ArrayList<>(PLAYER_TYPES);
-        if (session.preferredPlayerType != null && types.remove(session.preferredPlayerType)) {
-            types.add(0, session.preferredPlayerType);
-        }
-        return types;
-    }
-
-    private String fetchMaster(StreamSession session, String playerType) {
-        try {
-            AccessTokenClient.Token token = tokens.fetch(session.channel, playerType);
-            if (token == null) {
-                lastError = "no access token for " + playerType;
-                logger.log(lastError);
-                return null;
-            }
-            Http.Response response = http.get(usherUrl(session.masterUrl, token), Collections.emptyMap());
-            if (!response.isOk()) {
-                lastError = "usher returned " + response.status + " for " + playerType;
-                logger.log(lastError);
-                return null;
-            }
-            return response.body;
-        } catch (IOException e) {
-            lastError = playerType + ": " + e.getMessage();
-            logger.log("Backup " + lastError);
-            return null;
-        }
+    private String fetchMaster(StreamSession session, String playerType) throws IOException {
+        AccessTokenClient.Token token = tokens.fetch(session.channel, playerType);
+        if (token == null) throw new IOException("no access token");
+        Http.Response response = http.get(usherUrl(session.masterUrl, token), Collections.emptyMap());
+        if (!response.isOk()) throw new IOException("usher returned " + response.status);
+        return response.body;
     }
 
     private String fetchCleanPlaylist(String url) {
@@ -155,6 +187,15 @@ public final class BackupStreamFinder {
             return response.body;
         } catch (IOException e) {
             return null;
+        }
+    }
+
+    private static String resolve(String baseUrl, String url) {
+        if (url.startsWith("http://") || url.startsWith("https://")) return url;
+        try {
+            return URI.create(baseUrl).resolve(url).toString();
+        } catch (IllegalArgumentException e) {
+            return url;
         }
     }
 

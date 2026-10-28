@@ -2,6 +2,7 @@ package app.morphed.extension.twitch.adblock;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -12,7 +13,8 @@ import java.util.Map;
 final class FakeHttp implements Http {
     final Map<String, String> getResponses = new LinkedHashMap<>();
     final Map<String, String> postResponses = new LinkedHashMap<>();
-    final List<String> requests = new ArrayList<>();
+    // Backup player types are requested in parallel.
+    final List<String> requests = Collections.synchronizedList(new ArrayList<>());
 
     @Override
     public Response get(String url, Map<String, String> headers) throws IOException {
@@ -27,7 +29,9 @@ final class FakeHttp implements Http {
     }
 
     long count(String prefix) {
-        return requests.stream().filter(request -> request.startsWith(prefix)).count();
+        synchronized (requests) {
+            return requests.stream().filter(request -> request.startsWith(prefix)).count();
+        }
     }
 
     private static Response find(Map<String, String> responses, String key) throws IOException {

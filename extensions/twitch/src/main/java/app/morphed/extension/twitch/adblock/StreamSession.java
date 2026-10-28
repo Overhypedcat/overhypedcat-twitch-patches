@@ -19,13 +19,10 @@ final class StreamSession {
     final Map<String, PlaylistStitcher> stitchers = new HashMap<>();
     /** Backup master playlist per player type, reused until it turns out stale. */
     final Map<String, String> backupMasters = new HashMap<>();
-    /** Backup media playlist URL per quality, for the current ad break. */
-    final Map<String, String> backupMediaUrls = new HashMap<>();
+    /** Backup chosen per quality for the current ad break. */
+    final Map<String, BackupStreamFinder.Result> backupResults = new HashMap<>();
     final Map<String, Long> failedPlayerTypes = new HashMap<>();
 
-    String backupPlayerType;
-    /** The player type that last gave a clean playlist; tried first on the next break. */
-    String preferredPlayerType;
     boolean inAdBreak;
     /** Ad segments were replaced or cut out during the current break. */
     boolean swappedThisBreak;
@@ -62,8 +59,7 @@ final class StreamSession {
     void endAdBreak() {
         inAdBreak = false;
         swappedThisBreak = false;
-        backupPlayerType = null;
-        backupMediaUrls.clear();
+        backupResults.clear();
         failedPlayerTypes.clear();
     }
 }
