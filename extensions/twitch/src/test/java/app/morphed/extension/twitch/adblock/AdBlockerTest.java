@@ -4,6 +4,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -23,6 +24,7 @@ public class AdBlockerTest {
     private final FakeHttp http = new FakeHttp();
     private long now = 1_000_000;
     private int refreshes;
+    private final List<String> notices = new ArrayList<>();
     private final List<Problem> problems = new ArrayList<>();
     private AdBlocker blocker;
 
@@ -30,7 +32,19 @@ public class AdBlockerTest {
     public void setUp() {
         Problem.Reporter reporter = (problem, detail) -> problems.add(problem);
         BackupStreamFinder finder = new BackupStreamFinder(http, new AccessTokenClient(http, "device"), Logger.NONE, () -> now, reporter);
-        blocker = new AdBlocker(finder, Logger.NONE, () -> now, () -> refreshes++, reporter);
+        AdBlocker.BreakListener breaks = new AdBlocker.BreakListener() {
+            @Override
+            public void onBlocking(String quality) {
+                notices.add("blocking " + quality);
+            }
+
+            @Override
+            public void onBreakOver(boolean swapped) {
+                notices.add("over");
+                if (swapped) refreshes++;
+            }
+        };
+        blocker = new AdBlocker(finder, Logger.NONE, () -> now, breaks, reporter);
 
         for (String type : BackupStreamFinder.PLAYER_TYPES) {
             http.postResponses.put("\"playerType\":\"" + type + "\"", FakeHttp.tokenResponse(type));
@@ -124,6 +138,46 @@ public class AdBlockerTest {
         blocker.process(NATIVE_1080, Playlists.media("n", 107, "llll", false));
 
         assertEquals(1, refreshes);
+    }
+
+    @Test
+    public void noticeShowsBackupQualityUntilTheBreakEnds() {
+        backupHasAds("site", false);
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+
+        blocker.process(NATIVE_1080, Playlists.media("n", 102, "llaa", true));
+        blocker.process(NATIVE_1080, Playlists.media("n", 106, "llll", false));
+
+        assertEquals(Arrays.asList("blocking 1080p", "over"), notices);
+    }
+
+    @Test
+    public void noticeWithoutQualityWhenAdsAreOnlyCutOut() {
+        for (String type : BackupStreamFinder.PLAYER_TYPES) backupHasAds(type, true);
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+
+        blocker.process(NATIVE_1080, Playlists.media("n", 102, "llaa", true));
+
+        assertEquals(Collections.singletonList("blocking null"), notices);
+    }
+
+    @Test
+    public void prefersSourceQualityOverAutoplayWhenBothAreClean() {
+        backupHasAds("site", true);
+        backupHasAds("popout", true);
+        http.getResponses.put("embed-1080.m3u8", Playlists.media("embed", 101, "llll", false));
+        http.getResponses.put("autoplay-1080.m3u8", Playlists.media("autoplay", 101, "llll", false));
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+
+        String out = blocker.process(NATIVE_1080, Playlists.media("n", 102, "llaa", true));
+
+        assertTrue(out.contains(Playlists.segment("embed", 104)));
+    }
+
+    @Test
+    public void qualityLabels() {
+        assertEquals("360p", AdBlocker.qualityLabel("640x360"));
+        assertEquals(null, AdBlocker.qualityLabel(null));
     }
 
     @Test

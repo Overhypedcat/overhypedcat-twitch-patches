@@ -18,6 +18,10 @@ Morphe shows a banner when a new version of these patches is released.
 
 ## Error codes
 
+While an ad break is being blocked, a small "Blocking ads" label shows in the top left corner, with the
+quality of the ad-free stream in use, for example "Blocking ads (360p)". During pre-rolls often only the
+360p stream is ad-free; the original quality returns when the break ends.
+
 When Twitch changes something and ads may get through, the app shows a short message once per launch:
 
 | Code | Meaning |
@@ -34,8 +38,6 @@ Details are in logcat under the tag `TwitchMorphed`.
 - `extensions/twitch` - the Java code that runs inside Twitch, with unit tests
 - `extensions/twitch/stub` - compile-time copies of the Amazon IVS classes it hooks
 - `patches` - the Morphe bytecode patch
-- `Build.cmd` - builds, tests and patches a local copy: put the Twitch `.apkm` from APKMirror in `apk\`,
-  the patched APK lands in `dist\` and is installed if a phone is connected with USB debugging
 
 Commits to `dev` publish pre-releases, merges to `main` publish releases
 ([semantic commits](https://www.conventionalcommits.org): `fix:`, `feat:`, `chore:`).

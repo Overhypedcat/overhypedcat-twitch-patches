@@ -29,20 +29,43 @@ public final class AdBlocker {
     private static final long SESSION_MAX_IDLE_MS = 30 * 60 * 1000;
     private static final long REASSIGNMENT_WINDOW_MS = 30 * 1000;
 
+    /** Follows ad breaks, for the on-screen notice and the post-break player refresh. */
+    public interface BreakListener {
+        BreakListener NONE = new BreakListener() {
+            @Override
+            public void onBlocking(String quality) {
+            }
+
+            @Override
+            public void onBreakOver(boolean swapped) {
+            }
+        };
+
+        /**
+         * Called on every playlist poll during a break.
+         *
+         * @param quality the backup quality shown instead of the ad, like {@code 360p}, or null
+         *                while ads are only cut out or only their markers are removed
+         */
+        void onBlocking(String quality);
+
+        /** @param swapped ad segments were replaced or cut out, so the player may need a refresh */
+        void onBreakOver(boolean swapped);
+    }
+
     private final BackupStreamFinder backups;
     private final Logger logger;
     private final LongSupplier clock;
-    /** Runs when a break whose ad segments were swapped or cut out is over. */
-    private final Runnable afterSwappedBreak;
+    private final BreakListener breaks;
     private final Problem.Reporter problems;
     private final Map<String, StreamSession> sessionsByVariant = new ConcurrentHashMap<>();
 
     public AdBlocker(BackupStreamFinder backups, Logger logger, LongSupplier clock,
-                     Runnable afterSwappedBreak, Problem.Reporter problems) {
+                     BreakListener breaks, Problem.Reporter problems) {
         this.backups = backups;
         this.logger = logger;
         this.clock = clock;
-        this.afterSwappedBreak = afterSwappedBreak;
+        this.breaks = breaks;
         this.problems = problems;
     }
 
@@ -136,7 +159,7 @@ public final class AdBlocker {
         synchronized (session) {
             session.lastSeen = clock.getAsLong();
             session.lastVariantUrl = session.variantUrlFor(url);
-            MediaPlaylist playlist = MediaPlaylist.parse(body);
+            MediaPlaylist playlist = MediaPlaylist.parse(body, url);
             PlaylistStitcher stitcher = session.stitcherFor(url);
 
             if (!playlist.hasAds()) {
@@ -144,14 +167,14 @@ public final class AdBlocker {
                 if (!suspicious.isEmpty()) {
                     problems.report(Problem.UNRECOGNIZED_AD_MARKERS, String.join(", ", suspicious));
                 }
-                boolean refresh = false;
-                if (session.inAdBreak) {
+                boolean wasInBreak = session.inAdBreak;
+                boolean swapped = session.swappedThisBreak;
+                if (wasInBreak) {
                     logger.log("Ad break over on " + session.channel);
-                    refresh = session.swappedThisBreak;
                     session.endAdBreak();
                 }
                 String output = stitcher.process(playlist, body, PlaylistStitcher.NATIVE);
-                if (refresh) afterSwappedBreak.run();
+                if (wasInBreak) breaks.onBreakOver(swapped);
                 return output;
             }
 
@@ -165,11 +188,21 @@ public final class AdBlocker {
                 MasterPlaylist.Variant variant = session.master.byUrl(session.variantUrlFor(url));
                 BackupStreamFinder.Result backup = variant == null ? null : backups.find(session, variant);
                 if (backup != null) {
-                    return stitcher.process(MediaPlaylist.parse(backup.playlist), backup.playlist, "backup:" + backup.playerType);
+                    breaks.onBlocking(qualityLabel(backup.resolution));
+                    MediaPlaylist backupPlaylist = MediaPlaylist.parse(backup.playlist, backup.url);
+                    return stitcher.process(backupPlaylist, backup.playlist, "backup:" + backup.playerType);
                 }
             }
+            breaks.onBlocking(null);
             return stitcher.process(playlist, body, PlaylistStitcher.NATIVE);
         }
+    }
+
+    /** {@code 640x360} becomes {@code 360p}; audio only (no resolution) gives null. */
+    static String qualityLabel(String resolution) {
+        if (resolution == null) return null;
+        int x = resolution.indexOf('x');
+        return x < 0 ? resolution : resolution.substring(x + 1) + "p";
     }
 
     private void forgetIdleSessions(long now) {

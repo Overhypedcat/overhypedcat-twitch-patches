@@ -18,6 +18,7 @@ public final class StreamAdsPatch {
     private static final String TAG = "TwitchMorphed";
 
     private static final Problem.Reporter PROBLEMS = new ProblemNotifier();
+    private static final AdBreakIndicator INDICATOR = new AdBreakIndicator();
     private static final AdBlocker AD_BLOCKER = createAdBlocker();
 
     private StreamAdsPatch() {
@@ -50,6 +51,18 @@ public final class StreamAdsPatch {
         Http http = new UrlConnectionHttp();
         BackupStreamFinder backups = new BackupStreamFinder(
                 http, new AccessTokenClient(http), logger, System::currentTimeMillis, PROBLEMS);
-        return new AdBlocker(backups, logger, System::currentTimeMillis, PlayerRefresher::refreshPlayingPlayers, PROBLEMS);
+        AdBlocker.BreakListener breaks = new AdBlocker.BreakListener() {
+            @Override
+            public void onBlocking(String quality) {
+                INDICATOR.show(quality);
+            }
+
+            @Override
+            public void onBreakOver(boolean swapped) {
+                INDICATOR.hide();
+                if (swapped) PlayerRefresher.refreshPlayingPlayers();
+            }
+        };
+        return new AdBlocker(backups, logger, System::currentTimeMillis, breaks, PROBLEMS);
     }
 }
