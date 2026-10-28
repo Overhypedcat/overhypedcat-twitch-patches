@@ -48,6 +48,7 @@ public final class BackupStreamFinder {
             Arrays.asList("site", "popout", "mobile_web", "embed", "autoplay"));
 
     private static final long FAILED_TYPE_RETRY_MS = 15_000;
+    private static final long EMPTY_SEARCH_COOLDOWN_MS = 10_000;
     /** The player waits on our answer, so give up well before its 10 second request timeout. */
     private static final long SEARCH_BUDGET_MS = 6_000;
 
@@ -85,10 +86,15 @@ public final class BackupStreamFinder {
         String key = UrlKey.of(target.url);
         Result committed = session.backupResults.get(key);
         if (committed != null) {
-            String playlist = fetchCleanPlaylist(committed.url);
-            if (playlist != null) return new Result(committed.playerType, playlist, committed.url, committed.resolution);
+            String playlist = fetchPlaylist(committed.url);
+            if (isClean(playlist)) return new Result(committed.playerType, playlist, committed.url, committed.resolution);
             session.backupResults.remove(key);
         }
+
+        // The player asks for a new playlist every couple of seconds. When no player type was ad-free,
+        // searching again right away only floods Twitch with requests, which it answers by throttling
+        // the whole app (chat included).
+        if (clock.getAsLong() - session.lastEmptySearchAt < EMPTY_SEARCH_COOLDOWN_MS) return null;
 
         Map<String, Future<Attempt>> attempts = new LinkedHashMap<>();
         for (String playerType : PLAYER_TYPES) {
@@ -134,6 +140,8 @@ public final class BackupStreamFinder {
         if (best != null) {
             session.backupResults.put(key, best);
             logger.log("Using " + best.playerType + " playlist " + best.resolution + " for " + session.channel);
+        } else {
+            session.lastEmptySearchAt = clock.getAsLong();
         }
         return best;
     }
@@ -141,7 +149,8 @@ public final class BackupStreamFinder {
     private Attempt attempt(StreamSession session, String cachedMaster, MasterPlaylist.Variant target, String playerType) {
         Attempt attempt = new Attempt();
         String master = cachedMaster;
-        // A cached master playlist can go stale; when it does, retry once with a fresh token.
+        // A cached master playlist can expire; only then is it worth asking for a fresh token.
+        // A playlist that merely has ads keeps its master: the ad is in the stream, not the token.
         for (int round = 0; round < 2; round++) {
             boolean fresh = master == null;
             if (fresh) {
@@ -153,17 +162,19 @@ public final class BackupStreamFinder {
                     return attempt;
                 }
             }
+            attempt.master = master;
 
             MasterPlaylist.Variant variant = MasterPlaylist.parse(master).closestTo(target);
-            if (variant != null) {
-                String url = resolve(session.masterUrl, variant.url);
-                String playlist = fetchCleanPlaylist(url);
-                if (playlist != null) {
-                    attempt.master = master;
-                    attempt.result = new Result(playerType, playlist, url, variant.resolution);
-                    return attempt;
-                }
+            if (variant == null) return attempt;
+            String url = resolve(session.masterUrl, variant.url);
+            String playlist = fetchPlaylist(url);
+            if (playlist != null) {
+                if (isClean(playlist)) attempt.result = new Result(playerType, playlist, url, variant.resolution);
+                return attempt;
             }
+
+            // The media playlist could not be loaded: the cached master has expired.
+            attempt.master = null;
             master = null;
             if (fresh) break;
         }
@@ -178,16 +189,20 @@ public final class BackupStreamFinder {
         return response.body;
     }
 
-    private String fetchCleanPlaylist(String url) {
+    /** The media playlist, or null when it could not be loaded. */
+    private String fetchPlaylist(String url) {
         try {
             Http.Response response = http.get(url, Collections.emptyMap());
-            if (!response.isOk()) return null;
-            MediaPlaylist playlist = MediaPlaylist.parse(response.body);
-            if (playlist.segments.isEmpty() || playlist.hasAdSegments()) return null;
-            return response.body;
+            return response.isOk() ? response.body : null;
         } catch (IOException e) {
             return null;
         }
+    }
+
+    private static boolean isClean(String playlist) {
+        if (playlist == null) return false;
+        MediaPlaylist parsed = MediaPlaylist.parse(playlist);
+        return !parsed.segments.isEmpty() && !parsed.hasAdSegments();
     }
 
     private static String resolve(String baseUrl, String url) {

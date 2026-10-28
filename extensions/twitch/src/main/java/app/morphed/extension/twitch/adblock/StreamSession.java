@@ -22,6 +22,8 @@ final class StreamSession {
     /** Backup chosen per quality for the current ad break. */
     final Map<String, BackupStreamFinder.Result> backupResults = new HashMap<>();
     final Map<String, Long> failedPlayerTypes = new HashMap<>();
+    /** When a search last found no ad-free player type; searches pause for a while after. */
+    long lastEmptySearchAt = Long.MIN_VALUE / 2;
 
     /** The playlist carries ad markers (with or without ad segments). */
     boolean inAdBreak;
@@ -61,5 +63,6 @@ final class StreamSession {
         swappingAds = false;
         backupResults.clear();
         failedPlayerTypes.clear();
+        lastEmptySearchAt = Long.MIN_VALUE / 2;
     }
 }

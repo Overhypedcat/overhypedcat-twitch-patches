@@ -234,6 +234,26 @@ public class AdBlockerTest {
     }
 
     @Test
+    public void doesNotFloodTwitchWhileEveryBackupHasAds() {
+        for (String type : BackupStreamFinder.PLAYER_TYPES) backupHasAds(type, true);
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+        blocker.process(NATIVE_1080, Playlists.media("n", 102, "llaa", true));
+        long tokens = http.count("POST");
+        long requests = http.requests.size();
+
+        // Next poll two seconds later: no new search at all.
+        now += 2_000;
+        blocker.process(NATIVE_1080, Playlists.media("n", 103, "laaa", true));
+        assertEquals(requests, http.requests.size());
+
+        // After the pause it searches again, reusing the tokens it already has.
+        now += 10_000;
+        blocker.process(NATIVE_1080, Playlists.media("n", 104, "aaaa", true));
+        assertEquals(tokens, http.count("POST"));
+        assertTrue(http.requests.size() > requests);
+    }
+
+    @Test
     public void stripsNativeWhenEveryBackupHasAds() {
         for (String type : BackupStreamFinder.PLAYER_TYPES) backupHasAds(type, true);
         blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
