@@ -45,17 +45,17 @@ Commits to `dev` publish pre-releases, merges to `main` publish releases
 <!-- PATCHES_START EXPANDED -->
 > **[v1.0.0](https://github.com/Overhypedcat/overhypedcat-twitch-patches/releases/tag/v1.0.0)**&nbsp;&nbsp;•&nbsp;&nbsp;`main`&nbsp;&nbsp;•&nbsp;&nbsp;1 patches total
 <details open>
-<summary>📦 Twitch&nbsp;&nbsp;•&nbsp;&nbsp;1 patch</summary>
+<summary>Twitch&nbsp;&nbsp;•&nbsp;&nbsp;1 patch</summary>
 <br>
 
 **Package name:** `tv.twitch.android.app`
 
-**🎯 Supported versions:**
+**Supported versions:**
 
 | 31.8.0 |
 | :---: |
 
-| 💊&nbsp;Patch | 📜&nbsp;Description | ⚙️&nbsp;Options |
+| Patch | Description | Options |
 |----------|----------------|-----------|
 | [Block stream ads](#block-stream-ads) | Replaces ad-laden live playlists with ad-free ones from other player types, and strips ad segments when no clean playlist exists. |  |
 
