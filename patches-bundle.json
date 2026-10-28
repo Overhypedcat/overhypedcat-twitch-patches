@@ -1,7 +1,7 @@
 {
-  "created_at": "2026-10-28T16:03:37",
-  "description": "## [1.1.1](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.1.0...v1.1.1) (2026-10-28)\n\n### Bug Fixes\n\n* Place the Blocking ads label in the corner of the video ([5d49b84](https://github.com/Overhypedcat/overhypedcat-twitch-patches/commit/5d49b84cfdef17d8f034d35f7de8c764bf5c24c9))\n* Stop false E1 warning when opening a stream ([8554c25](https://github.com/Overhypedcat/overhypedcat-twitch-patches/commit/8554c2566984a1cab48f9d529c54b335bb1dcd16))",
-  "download_url": "https://github.com/Overhypedcat/overhypedcat-twitch-patches/releases/download/v1.1.1/patches-1.1.1.mpp",
+  "created_at": "2026-10-28T16:15:06",
+  "description": "## [1.1.2-dev.1](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.1.1...v1.1.2-dev.1) (2026-10-28)\n\n### Bug Fixes\n\n* Leave stream previews alone and hide the label when the ad ends ([6640bbc](https://github.com/Overhypedcat/overhypedcat-twitch-patches/commit/6640bbc93be149000d83482b9a6bb68a26923325))",
+  "download_url": "https://github.com/Overhypedcat/overhypedcat-twitch-patches/releases/download/v1.1.2-dev.1/patches-1.1.2-dev.1.mpp",
   "signature_download_url": "",
-  "version": "1.1.1"
+  "version": "1.1.2-dev.1"
 }
