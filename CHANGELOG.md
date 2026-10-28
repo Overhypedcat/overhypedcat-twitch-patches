@@ -1,3 +1,10 @@
+## [1.1.1-dev.1](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.1.0...v1.1.1-dev.1) (2026-10-28)
+
+### Bug Fixes
+
+* Place the Blocking ads label in the corner of the video ([5d49b84](https://github.com/Overhypedcat/overhypedcat-twitch-patches/commit/5d49b84cfdef17d8f034d35f7de8c764bf5c24c9))
+* Stop false E1 warning when opening a stream ([8554c25](https://github.com/Overhypedcat/overhypedcat-twitch-patches/commit/8554c2566984a1cab48f9d529c54b335bb1dcd16))
+
 ## [1.1.0](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.0.0...v1.1.0) (2026-10-28)
 
 ### Bug Fixes

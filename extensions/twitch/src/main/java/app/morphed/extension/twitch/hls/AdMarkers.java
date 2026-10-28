@@ -9,22 +9,26 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Ad markers Twitch places in HLS playlists. Kept in sync with vaft's AdSignifiers.
+ * Ad markers Twitch places in HLS playlists. Based on vaft's AdSignifiers.
  */
 public final class AdMarkers {
     private static final String[] SIGNIFIERS = {
             "stitched-ad",
             "EXT-X-CUE-OUT",
             "twitch-stitched",
-            "EXT-X-DATERANGE:CLASS=\"twitch-maf-ad\"",
-            "EXT-X-DATERANGE:CLASS=\"twitch-trigger\"",
+            // vaft matches these only when CLASS is the first DATERANGE attribute; match any position.
+            "CLASS=\"twitch-maf-ad\"",
+            "CLASS=\"twitch-trigger\"",
     };
 
     private static final String[] AD_SEGMENT_URL_PATTERNS = {"/adsquared/", "/_404/", "/processing"};
 
-    /** DATERANGE classes Twitch uses for stream metadata, not ads (from vaft's field observations). */
+    /**
+     * DATERANGE classes that are not ads by themselves (from vaft's field observations). Quartile
+     * markers are ad tracking beacons that can outlive the ad they belong to.
+     */
     private static final Set<String> NON_AD_CLASSES = new HashSet<>(Arrays.asList(
-            "twitch-session", "twitch-stream-source", "twitch-assignment"));
+            "twitch-session", "twitch-stream-source", "twitch-assignment", "twitch-ad-quartile"));
     private static final Set<String> AD_WORDS = new HashSet<>(Arrays.asList(
             "ad", "ads", "advert", "stitched", "maf", "break", "midroll", "preroll", "sponsor", "cue",
             "scte35", "splice", "commercial", "quartile", "trigger"));
@@ -61,15 +65,14 @@ public final class AdMarkers {
             String tag = colon >= 0 ? line.substring(0, colon) : line;
             if (hasAdWord(tag.substring(1))) markers.add(tag);
 
+            String dateRangeClass = null;
             if (tag.equals("#EXT-X-DATERANGE")) {
                 Matcher matcher = DATERANGE_CLASS.matcher(line);
-                if (matcher.find()) {
-                    String dateRangeClass = matcher.group(1);
-                    if (!NON_AD_CLASSES.contains(dateRangeClass) && hasAdWord(dateRangeClass)) {
-                        markers.add("CLASS=\"" + dateRangeClass + "\"");
-                    }
-                }
+                if (matcher.find()) dateRangeClass = matcher.group(1);
             }
+            if (dateRangeClass != null && NON_AD_CLASSES.contains(dateRangeClass)) continue;
+
+            if (dateRangeClass != null && hasAdWord(dateRangeClass)) markers.add("CLASS=\"" + dateRangeClass + "\"");
             if (line.contains("X-TV-TWITCH-AD")) markers.add("X-TV-TWITCH-AD attribute");
         }
         return markers;

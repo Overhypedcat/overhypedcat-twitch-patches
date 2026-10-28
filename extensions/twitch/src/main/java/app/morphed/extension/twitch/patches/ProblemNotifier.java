@@ -29,9 +29,15 @@ final class ProblemNotifier implements Problem.Reporter {
         main.post(() -> {
             Context context = applicationContext();
             if (context == null) return;
-            Toast.makeText(context, "Ad blocker needs an update (" + problem.code + ")\n" + problem.description,
-                    Toast.LENGTH_LONG).show();
+            String message = "Ad blocker needs an update (" + problem.code + ")\n" + problem.description;
+            if (detail != null && !detail.isEmpty()) message += "\n" + shorten(detail);
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show();
         });
+    }
+
+    /** The detail names what Twitch changed; long URLs are cut so the message stays small. */
+    private static String shorten(String detail) {
+        return detail.length() <= 120 ? detail : detail.substring(0, 117) + "...";
     }
 
     private static Context applicationContext() {
