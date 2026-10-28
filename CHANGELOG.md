@@ -1,3 +1,16 @@
+## [2.0.0](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.3.3...v2.0.0) (2026-10-28)
+
+### ⚠ BREAKING CHANGES
+
+* version 2 of the patches. Ad break handling changed:
+breaks are tracked per quality and end after two clean playlist polls.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+### New Features
+
+* Version 2, fixes from the code review ([c7c7357](https://github.com/Overhypedcat/overhypedcat-twitch-patches/commit/c7c735759f639ff34ad9d66437c0692799320804))
+
 ## [1.3.3](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.3.2...v1.3.3) (2026-10-28)
 
 ### Bug Fixes
