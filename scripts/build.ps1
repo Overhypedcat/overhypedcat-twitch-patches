@@ -104,7 +104,8 @@ Write-Host "Patched APK: $root\$output" -ForegroundColor Green
 Step 'Installing'
 $adb = "$sdk\platform-tools\adb.exe"
 # Start the adb server on its own, otherwise it inherits this script's output and keeps it open.
-Start-Process $adb -ArgumentList 'start-server' -WindowStyle Hidden -Wait
+# WaitForExit waits for adb itself only; Start-Process -Wait would also wait for the server it leaves running.
+(Start-Process $adb -ArgumentList 'start-server' -WindowStyle Hidden -PassThru).WaitForExit()
 $device = & $adb devices | Select-String '\tdevice$' | Select-Object -First 1
 if (-not $device) {
     Write-Host 'No phone connected over USB debugging. Copy the patched APK to the phone and open it to install.'
