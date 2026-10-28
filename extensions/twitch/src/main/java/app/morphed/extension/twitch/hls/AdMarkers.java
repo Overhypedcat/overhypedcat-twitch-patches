@@ -21,7 +21,13 @@ public final class AdMarkers {
             "CLASS=\"twitch-trigger\"",
     };
 
-    private static final String[] AD_SEGMENT_URL_PATTERNS = {"/adsquared/", "/_404/", "/processing"};
+    /** Always an ad. */
+    private static final String[] AD_SEGMENT_URL_PATTERNS = {"/adsquared/"};
+    /**
+     * Placeholders Twitch serves for missing or still transcoding segments: ads during a stitched
+     * ad, but also show up when a stream hiccups or the streamer reconnects.
+     */
+    private static final String[] PLACEHOLDER_URL_PATTERNS = {"/_404/", "/processing"};
 
     /**
      * DATERANGE classes that are not ads by themselves (from vaft's field observations). Quartile
@@ -95,6 +101,13 @@ public final class AdMarkers {
 
     public static boolean isAdSegmentUrl(String url) {
         for (String pattern : AD_SEGMENT_URL_PATTERNS) {
+            if (url.contains(pattern)) return true;
+        }
+        return false;
+    }
+
+    public static boolean isPlaceholderUrl(String url) {
+        for (String pattern : PLACEHOLDER_URL_PATTERNS) {
             if (url.contains(pattern)) return true;
         }
         return false;

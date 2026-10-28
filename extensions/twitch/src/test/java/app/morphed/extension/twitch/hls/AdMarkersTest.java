@@ -74,5 +74,9 @@ public class AdMarkersTest {
     public void recognisesAdSegmentUrls() {
         assertTrue(AdMarkers.isAdSegmentUrl("https://edge.example/adsquared/1.ts"));
         assertFalse(AdMarkers.isAdSegmentUrl("https://edge.example/live/1.ts"));
+        // Placeholders are not ads by themselves: Twitch also serves them when a stream hiccups.
+        assertFalse(AdMarkers.isAdSegmentUrl("https://edge.example/_404/1.ts"));
+        assertTrue(AdMarkers.isPlaceholderUrl("https://edge.example/_404/1.ts"));
+        assertTrue(AdMarkers.isPlaceholderUrl("https://edge.example/processing/1.ts"));
     }
 }

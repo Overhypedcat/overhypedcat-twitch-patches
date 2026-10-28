@@ -46,6 +46,14 @@ public final class PlaylistStitcher {
         return rewriting;
     }
 
+    /** Whether {@code playlist} has a segment this stitcher already served, which means the same stream. */
+    public synchronized boolean recognises(MediaPlaylist playlist) {
+        for (MediaPlaylist.Segment segment : playlist.segments) {
+            if (sequenceByUri.containsKey(segment.uri)) return true;
+        }
+        return false;
+    }
+
     public synchronized String process(MediaPlaylist playlist, String text, String source) {
         if (nextSequence == Long.MIN_VALUE) {
             nextSequence = playlist.mediaSequence;
@@ -119,7 +127,9 @@ public final class PlaylistStitcher {
         }
         emptyPolls = 0;
 
-        boolean keepPrefetch = !playlist.hasAds() && reachedLastSegment;
+        // Prefetch hints can point at upcoming ad segments, so they go while an ad is stitched in;
+        // markers that come without ads (trigger, maf-ad) do not cost the low latency mode.
+        boolean keepPrefetch = !playlist.hasAdSegments() && !playlist.hasStitchedAdTags && reachedLastSegment;
         lastOutput = render(playlist, window, windowSequences, keepPrefetch);
         return lastOutput;
     }

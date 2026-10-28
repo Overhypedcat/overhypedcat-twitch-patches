@@ -92,6 +92,11 @@ public final class MorphedHttpClient implements HttpClient {
 
     private static void deliver(Request request, Response response, ResponseCallback callback, String url,
                                 byte[] body, long start, long downloaded) {
+        // The player may have given up on this request (left the stream, switched quality, timed out).
+        if (request.isCancelled()) {
+            if (DebugLog.isOn()) DebugLog.log("Playlist " + UrlKey.of(url) + " cancelled before processing");
+            return;
+        }
         long processingStart = SystemClock.elapsedRealtime();
         byte[] output = body;
         try {
@@ -103,11 +108,19 @@ public final class MorphedHttpClient implements HttpClient {
         } catch (Throwable ignored) {
             // Fall back to the original body; playback must never break because of the ad blocker.
         }
-        if (response.getHeader("Content-Length") != null) {
-            response.setHeader("Content-Length", String.valueOf(output.length));
+        // Same rule as IVS's own callbacks: the native side is only called under the request lock and
+        // never for a cancelled request, whose native object may already be gone.
+        synchronized (request.lock()) {
+            if (request.isCancelled()) {
+                if (DebugLog.isOn()) DebugLog.log("Playlist " + UrlKey.of(url) + " cancelled during processing");
+                return;
+            }
+            if (response.getHeader("Content-Length") != null) {
+                response.setHeader("Content-Length", String.valueOf(output.length));
+            }
+            response.setConsumer(null, new BytesConsumer(request, output));
+            callback.onResponse(response);
         }
-        response.setConsumer(null, new BytesConsumer(request, output));
-        callback.onResponse(response);
 
         if (DebugLog.isOn()) {
             long end = SystemClock.elapsedRealtime();

@@ -147,6 +147,7 @@ public class AdBlockerTest {
 
         blocker.process(NATIVE_1080, Playlists.media("n", 102, "llaa", true));
         blocker.process(NATIVE_1080, Playlists.media("n", 106, "llll", false));
+        blocker.process(NATIVE_1080, Playlists.media("n", 107, "llll", false));
 
         assertEquals(Arrays.asList("blocking 1080p", "over"), notices);
     }
@@ -158,10 +159,46 @@ public class AdBlockerTest {
         blocker.process(NATIVE_1080, Playlists.media("n", 102, "llaa", true));
 
         String out = blocker.process(NATIVE_1080, Playlists.media("n", 106, "llll", true));
+        blocker.process(NATIVE_1080, Playlists.media("n", 107, "llll", true));
 
         assertEquals(Arrays.asList("blocking 1080p", "over"), notices);
         assertTrue(out.contains(Playlists.segment("n", 109)));
         assertFalse(out.contains("weaver.example/site"));
+    }
+
+    @Test
+    public void oneCleanPollBetweenTwoAdsDoesNotEndTheBreak() {
+        backupHasAds("site", false);
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+        blocker.process(NATIVE_1080, Playlists.media("n", 102, "llaa", true));
+        blocker.process(NATIVE_1080, Playlists.media("n", 106, "llll", false));
+        blocker.process(NATIVE_1080, Playlists.media("n", 108, "llaa", true));
+
+        assertEquals(0, refreshes);
+        assertFalse(notices.contains("over"));
+    }
+
+    @Test
+    public void unrelatedPlaylistIsNotTakenForTheStreamMovingServers() {
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+        String other = "https://euc11.playlist.ttvnw.net/v1/playlist/pbp.m3u8";
+        now += 3_000;
+        String text = Playlists.media("pbp", 500, "llaa", true);
+
+        assertSame(text, blocker.process(other, text));
+        assertFalse(blocker.isKnownMediaPlaylist(other));
+        assertEquals(Collections.emptyList(), notices);
+    }
+
+    @Test
+    public void streamHiccupPlaceholdersAreNotAds() {
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+        String hiccup = Playlists.media("n", 101, "llll", false).replace("/n/104.ts", "/_404/104.ts");
+
+        blocker.process(NATIVE_1080, hiccup);
+
+        assertTrue(http.requests.isEmpty());
+        assertEquals(Collections.emptyList(), notices);
     }
 
     @Test

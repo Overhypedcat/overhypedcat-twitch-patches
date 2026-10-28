@@ -51,9 +51,10 @@ public final class MediaPlaylist {
             this.live = live;
             this.discontinuity = discontinuity;
             this.programDateTime = programDateTime;
-            // Only trust the title while a stitched ad is announced, so neither a format change at
-            // Twitch nor an unrelated marker can turn ordinary segments into "ads".
-            this.ad = (liveTitlesInUse && !live) || AdMarkers.isAdSegmentUrl(uri);
+            // Only trust the title, and the placeholder URLs Twitch also uses when a stream hiccups,
+            // while a stitched ad is announced, so neither a format change at Twitch, an unrelated
+            // marker nor a reconnecting streamer can turn ordinary segments into "ads".
+            this.ad = (liveTitlesInUse && (!live || AdMarkers.isPlaceholderUrl(uri))) || AdMarkers.isAdSegmentUrl(uri);
         }
 
         public boolean isAd() {
@@ -69,15 +70,18 @@ public final class MediaPlaylist {
     public final long mediaSequence;
     public final long discontinuitySequence;
     public final boolean hasAdTags;
+    /** A stitched ad is announced; see {@link AdMarkers#hasStitchedAdTags}. */
+    public final boolean hasStitchedAdTags;
 
     private MediaPlaylist(List<String> header, List<Segment> segments, List<String> trailer,
-                          long mediaSequence, long discontinuitySequence, boolean hasAdTags) {
+                          long mediaSequence, long discontinuitySequence, boolean hasAdTags, boolean hasStitchedAdTags) {
         this.header = Collections.unmodifiableList(header);
         this.segments = Collections.unmodifiableList(segments);
         this.trailer = Collections.unmodifiableList(trailer);
         this.mediaSequence = mediaSequence;
         this.discontinuitySequence = discontinuitySequence;
         this.hasAdTags = hasAdTags;
+        this.hasStitchedAdTags = hasStitchedAdTags;
     }
 
     public boolean hasAdSegments() {
@@ -153,7 +157,7 @@ public final class MediaPlaylist {
                     mediaSequence + i, liveTitlesInUse));
         }
 
-        return new MediaPlaylist(header, segments, trailer, mediaSequence, discontinuitySequence, hasAdTags);
+        return new MediaPlaylist(header, segments, trailer, mediaSequence, discontinuitySequence, hasAdTags, liveTitlesInUse);
     }
 
     private static final Pattern URI_ATTRIBUTE = Pattern.compile("URI=\"([^\"]*)\"");

@@ -13,8 +13,8 @@ import java.util.Map;
 import java.util.WeakHashMap;
 
 /**
- * Keeps track of the IVS players and nudges the playing ones back to the live edge after an
- * ad break, so audio and video line up again after switching playlists.
+ * Keeps track of the IVS players and nudges the playing, unmuted ones back to the live edge after
+ * an ad break, so audio and video line up again after switching playlists.
  */
 @SuppressWarnings("unused")
 public final class PlayerRefresher {
@@ -46,8 +46,11 @@ public final class PlayerRefresher {
                 try {
                     // Buffering players are nudged too: a stall right after the switch is what this fixes.
                     Player.State state = player.getState();
-                    StreamAdsPatch.LOGGER.log("Player " + System.identityHashCode(player) + " state " + state);
+                    boolean muted = player.isMuted();
+                    StreamAdsPatch.LOGGER.log("Player " + System.identityHashCode(player) + " state " + state + (muted ? ", muted" : ""));
                     if (state != Player.State.PLAYING && state != Player.State.BUFFERING) continue;
+                    // Previews in the feed play muted; only the stream being watched has sound.
+                    if (muted) continue;
                     player.pause();
                     MAIN.postDelayed(player::play, PLAY_DELAY_MS);
                     StreamAdsPatch.LOGGER.log("Refreshed player " + System.identityHashCode(player) + " after ad break");

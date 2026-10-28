@@ -11,6 +11,8 @@ public interface Player {
 
     State getState();
 
+    boolean isMuted();
+
     void pause();
 
     void play();

@@ -170,6 +170,16 @@ public final class AdBlocker {
             logger.log("Leaving unrelated playlist alone: " + UrlKey.of(url));
             return body;
         }
+        // Only the same stream shares segments with it; anything else (picture-by-picture, a preview
+        // that was not recognised) must not mix its segments and ads into the stream being watched.
+        boolean sameStream;
+        synchronized (latest) {
+            sameStream = latest.stitcherFor(latest.lastVariantUrl).recognises(MediaPlaylist.parse(body, url));
+        }
+        if (!sameStream) {
+            logger.log("Leaving unrelated playlist alone (no shared segments): " + UrlKey.of(url));
+            return body;
+        }
         return onMediaPlaylist(adoptMovedPlaylist(latest, url), url, body);
     }
 
@@ -225,21 +235,46 @@ public final class AdBlocker {
     }
 
     private String onMediaPlaylist(StreamSession session, String url, String body) {
+        MediaPlaylist playlist = MediaPlaylist.parse(body, url);
+
+        // The search can take seconds, so it runs without the session lock: a retry of a timed out
+        // request must not queue up behind it. One search per stream at a time; a poll arriving
+        // during one cuts the ad out instead of starting another.
+        BackupStreamFinder.Result backup = null;
+        String searchNote = "";
+        if (playlist.hasAdSegments()) {
+            MasterPlaylist.Variant variant = session.master.byUrl(session.variantUrlFor(url));
+            if (variant == null) {
+                searchNote = " (quality unknown)";
+            } else if (!session.searching.compareAndSet(false, true)) {
+                searchNote = " (another search is running)";
+            } else {
+                long searchStart = clock.getAsLong();
+                try {
+                    backup = backups.find(session, variant);
+                } finally {
+                    session.searching.set(false);
+                }
+                searchNote = " (searched " + (clock.getAsLong() - searchStart) + "ms)";
+            }
+        }
+
         long waitStart = clock.getAsLong();
         synchronized (session) {
             long waited = clock.getAsLong() - waitStart;
             if (waited > 100) logger.log("Waited " + waited + "ms for " + session.channel + " (another playlist was being handled)");
-            return handleMediaPlaylist(session, url, body);
+            return handleMediaPlaylist(session, url, body, playlist, backup, searchNote);
         }
     }
 
     /** Called with the session locked. */
-    private String handleMediaPlaylist(StreamSession session, String url, String body) {
+    private String handleMediaPlaylist(StreamSession session, String url, String body, MediaPlaylist playlist,
+                                       BackupStreamFinder.Result backup, String searchNote) {
         session.lastSeen = clock.getAsLong();
         session.lastVariantUrl = session.variantUrlFor(url);
-        MediaPlaylist playlist = MediaPlaylist.parse(body, url);
         PlaylistStitcher stitcher = session.stitcherFor(url);
-        logger.log(pollSummary(session, url, playlist));
+        StreamSession.QualityState quality = session.qualityFor(url);
+        logger.log(pollSummary(session, url, playlist, quality));
 
         if (!playlist.hasAds()) {
             Set<String> suspicious = AdMarkers.suspiciousMarkers(body);
@@ -256,44 +291,46 @@ public final class AdBlocker {
         }
 
         if (playlist.hasAdSegments()) {
-            session.swappingAds = true;
-            MasterPlaylist.Variant variant = session.master.byUrl(session.variantUrlFor(url));
-            long searchStart = clock.getAsLong();
-            BackupStreamFinder.Result backup = variant == null ? null : backups.find(session, variant);
-            long searchMs = clock.getAsLong() - searchStart;
+            quality.swappingAds = true;
+            quality.cleanPolls = 0;
             if (backup != null) {
-                logger.log("Serving " + backup.playerType + " " + backup.resolution + " instead (found in " + searchMs + "ms)");
+                logger.log("Serving " + backup.playerType + " " + backup.resolution + " instead" + searchNote);
                 breaks.onBlocking(qualityLabel(backup.resolution));
                 MediaPlaylist backupPlaylist = MediaPlaylist.parse(backup.playlist, backup.url);
                 return stitcher.process(backupPlaylist, backup.playlist, "backup:" + backup.playerType);
             }
-            logger.log("No ad-free stream " + (variant == null ? "(quality unknown)" : "(searched " + searchMs + "ms)")
-                    + ", cutting the ad out");
+            logger.log("No ad-free stream" + searchNote + ", cutting the ad out");
             breaks.onBlocking(null);
             return stitcher.process(playlist, body, PlaylistStitcher.NATIVE);
         }
 
-        // Ad markers can stay in the playlist a while after the ad itself; the break is over
-        // for the viewer as soon as the original stream has no ad segments left.
+        // Ad markers can stay in the playlist a while after the ad itself, so the break follows the
+        // ad segments. It ends after two clean polls in a row, so a single clean window (for example
+        // between two ads) does not end it and start it again moments later.
         String output = stitcher.process(playlist, body, PlaylistStitcher.NATIVE);
-        if (session.swappingAds) {
+        if (quality.swappingAds && ++quality.cleanPolls >= 2) {
             logger.log("Ad break over on " + session.channel);
-            session.endAdSwap();
+            session.endAdSwap(url);
             breaks.onBreakOver();
         }
         return output;
     }
 
     /** One line per playlist refresh for the detailed log. */
-    private static String pollSummary(StreamSession session, String url, MediaPlaylist playlist) {
+    private static String pollSummary(StreamSession session, String url, MediaPlaylist playlist,
+                                      StreamSession.QualityState quality) {
         MasterPlaylist.Variant variant = session.master.byUrl(session.variantUrlFor(url));
         int ads = 0;
+        int untitled = 0;
         for (MediaPlaylist.Segment segment : playlist.segments) {
             if (segment.isAd()) ads++;
+            else if (!segment.live) untitled++;
         }
         return "Playlist " + session.channel + " " + (variant == null ? "?" : variant.resolution == null ? "audio" : variant.resolution)
                 + ": sequence " + playlist.mediaSequence + ", " + playlist.segments.size() + " segments, " + ads + " ads"
-                + (playlist.hasAdTags ? ", ad markers" : "") + (session.swappingAds ? ", in break" : "");
+                // Not titled "live" without a stitched ad marker: if these are ads, Twitch changed its markers.
+                + (untitled > 0 ? ", " + untitled + " not titled live" : "")
+                + (playlist.hasAdTags ? ", ad markers" : "") + (quality.swappingAds ? ", in break" : "");
     }
 
     /** {@code 640x360} becomes {@code 360p}; audio only (no resolution) gives null. */

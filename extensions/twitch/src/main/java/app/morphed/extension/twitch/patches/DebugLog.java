@@ -53,6 +53,7 @@ public final class DebugLog {
         return thread;
     });
 
+    /** The open log file, or null while logging is off. */
     private static volatile Writer writer;
     private static volatile String fileName;
     private static ScheduledFuture<?> heartbeat;
@@ -92,26 +93,27 @@ public final class DebugLog {
     }
 
     public static void log(String message) {
-        Writer current = writer;
-        if (current == null) return;
+        // The line goes to the file open now; tasks run in order, so it lands before that file's close.
+        Writer target = writer;
+        if (target == null) return;
         String line = timestamp() + " [" + Thread.currentThread().getName() + "] " + message + "\n";
-        IO.execute(() -> {
-            Writer target = writer;
-            if (target == null) return;
-            try {
-                // Buffered; flush() runs once a second, so logging costs little even when it is busy.
-                target.write(line);
-            } catch (IOException e) {
-                Log.e(TAG, "Writing the log failed", e);
-            }
-        });
+        IO.execute(() -> write(target, line));
+    }
+
+    private static void write(Writer target, String line) {
+        try {
+            // Buffered; flush() runs once a second, so logging costs little even when it is busy.
+            target.write(line);
+        } catch (IOException e) {
+            Log.e(TAG, "Writing the log failed", e);
+        }
     }
 
     /** Writes buffered lines to the file; at most a second of log is lost if the app is killed. */
     private static void flush() {
+        Writer target = writer;
+        if (target == null) return;
         IO.execute(() -> {
-            Writer target = writer;
-            if (target == null) return;
             try {
                 target.flush();
             } catch (IOException e) {
@@ -144,13 +146,14 @@ public final class DebugLog {
         Writer current = writer;
         if (current == null) return;
         log("Log stopped.");
+        // Off right away, so switching it on again at once starts a new file instead of being lost.
+        writer = null;
+        fileName = null;
         IO.execute(() -> {
-            writer = null;
-            fileName = null;
             try {
                 current.close();
-            } catch (IOException ignored) {
-                // Already flushed line by line.
+            } catch (IOException e) {
+                Log.e(TAG, "Closing the log failed", e);
             }
         });
     }

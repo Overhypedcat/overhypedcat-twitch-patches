@@ -33,6 +33,7 @@ final class AdBreakIndicator {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable hideRunnable = this::hideNow;
     private WeakReference<Activity> resumedActivity = new WeakReference<>(null);
+    private WeakReference<View> video = new WeakReference<>(null);
     private boolean callbacksRegistered;
     private TextView label;
 
@@ -54,10 +55,17 @@ final class AdBreakIndicator {
                 decor.addView(label, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.START));
             }
-            label.setText(text);
-            // Repositioned on every update so it follows the video into fullscreen, landscape or a smaller player.
-            place(activity, decor, label);
-            label.bringToFront();
+            if (!text.contentEquals(label.getText())) label.setText(text);
+            // Repositioned on every update so it follows the video into fullscreen, landscape or a smaller
+            // player. The view tree is only searched again when the remembered video view is gone.
+            View surface = video.get();
+            if (surface == null || !surface.isAttachedToWindow() || !surface.isShown()) {
+                surface = findVideoSurface(decor);
+                video = new WeakReference<>(surface);
+            }
+            place(activity, decor, label, surface);
+            // bringToFront relayouts the whole window, so only when something else covers the label.
+            if (decor.getChildAt(decor.getChildCount() - 1) != label) label.bringToFront();
             main.removeCallbacks(hideRunnable);
             main.postDelayed(hideRunnable, STALE_MS);
         });
@@ -98,11 +106,10 @@ final class AdBreakIndicator {
     }
 
     /** Top left corner of the video, or of the screen below the status bar when no video is found. */
-    private static void place(Activity activity, ViewGroup decor, TextView label) {
+    private static void place(Activity activity, ViewGroup decor, TextView label, View video) {
         int margin = dp(activity, 8);
         int left = 0;
         int top;
-        View video = findVideoSurface(decor);
         if (video != null) {
             int[] videoLocation = new int[2];
             int[] decorLocation = new int[2];

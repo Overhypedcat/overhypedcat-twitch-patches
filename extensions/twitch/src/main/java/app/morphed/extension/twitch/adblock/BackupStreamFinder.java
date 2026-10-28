@@ -49,10 +49,15 @@ public final class BackupStreamFinder {
 
     private static final long FAILED_TYPE_RETRY_MS = 15_000;
     private static final long EMPTY_SEARCH_COOLDOWN_MS = 10_000;
-    /** The player waits on our answer, so give up well before its 10 second request timeout. */
-    private static final long SEARCH_BUDGET_MS = 6_000;
+    /**
+     * The player waits on our answer and gives up after 10 seconds, so everything a poll does here,
+     * re-checking the current backup included, has to finish well before that.
+     */
+    static final long SEARCH_BUDGET_MS = 5_000;
+    /** Requests that outlive their budget keep a thread until their own timeout; this caps how many. */
+    private static final int MAX_THREADS = 8;
 
-    private static final ExecutorService EXECUTOR = Executors.newCachedThreadPool(runnable -> {
+    private static final ExecutorService EXECUTOR = Executors.newFixedThreadPool(MAX_THREADS, runnable -> {
         Thread thread = new Thread(runnable, "TwitchMorphed-backup");
         thread.setDaemon(true);
         return thread;
@@ -83,10 +88,21 @@ public final class BackupStreamFinder {
 
     /** A clean playlist for {@code target}, or null when every player type has ads too. */
     Result find(StreamSession session, MasterPlaylist.Variant target) {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SEARCH_BUDGET_MS);
         String key = UrlKey.of(target.url);
         Result committed = session.backupResults.get(key);
         if (committed != null) {
-            String playlist = fetchPlaylist(committed.url);
+            Future<String> refresh = EXECUTOR.submit(() -> fetchPlaylist(committed.url));
+            String playlist;
+            try {
+                playlist = refresh.get(SEARCH_BUDGET_MS, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException e) {
+                refresh.cancel(true);
+                logger.log("Backup " + committed.playerType + " too slow to refresh");
+                return null;
+            } catch (InterruptedException | ExecutionException e) {
+                return null;
+            }
             if (isClean(playlist)) return new Result(committed.playerType, playlist, committed.url, committed.resolution);
             session.backupResults.remove(key);
         }
@@ -108,7 +124,6 @@ public final class BackupStreamFinder {
         }
         if (attempts.isEmpty()) return null;
 
-        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SEARCH_BUDGET_MS);
         Result best = null;
         int failed = 0;
         String lastError = null;
