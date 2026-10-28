@@ -1,3 +1,9 @@
+## [1.3.1](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.3.0...v1.3.1) (2026-10-28)
+
+### Bug Fixes
+
+* Ask encrypted DNS and the phone's DNS at the same time ([4b24165](https://github.com/Overhypedcat/overhypedcat-twitch-patches/commit/4b24165fc0c5e57452ea9d980d4372ed25616967))
+
 ## [1.3.0](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.2.1...v1.3.0) (2026-10-28)
 
 ### New Features
