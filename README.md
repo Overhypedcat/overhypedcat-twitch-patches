@@ -36,9 +36,7 @@ Details are in logcat under the tag `TwitchMorphed`.
 ## Block ad servers
 
 Banner, display and in-feed ads come from Twitch's own ad server (`edge.ads.twitch.tv`). This patch
-refuses it and Twitch's tracking servers inside the app, and looks up every other server over encrypted
-DNS (Cloudflare, then Google), so the app does not depend on the phone's DNS. If encrypted DNS fails,
-the phone's DNS is used.
+refuses it and Twitch's tracking servers inside the app; everything else connects as usual.
 
 ## Detailed log
 

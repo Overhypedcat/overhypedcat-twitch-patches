@@ -17,8 +17,7 @@ private const val GET_ALL_BY_NAME = "getAllByName(Ljava/lang/String;)[Ljava/net/
 val adServerBlockingPatch = bytecodePatch(
     name = "Block ad servers",
     description = "Blocks Twitch's banner, display and feed ads (edge.ads.twitch.tv) and its tracking servers " +
-        "inside the app, and looks up every other server over encrypted DNS (Cloudflare, then Google) instead " +
-        "of the phone's DNS, so a slow or filtering DNS cannot stall Twitch.",
+        "inside the app.",
     default = true
 ) {
     compatibleWith(COMPATIBILITY_TWITCH)

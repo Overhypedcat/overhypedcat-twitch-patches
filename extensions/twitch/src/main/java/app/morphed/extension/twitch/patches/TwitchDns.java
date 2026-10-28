@@ -1,45 +1,24 @@
 package app.morphed.extension.twitch.patches;
 
-import android.util.Log;
-
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
-import app.morphed.extension.twitch.adblock.UrlConnectionHttp;
-import app.morphed.extension.twitch.dns.AppDns;
-import app.morphed.extension.twitch.dns.DohResolver;
+import app.morphed.extension.twitch.dns.HostBlocklist;
 
 /**
- * Replaces the {@code InetAddress.getAllByName} call in Twitch's OkHttp connection code.
+ * Replaces the {@code InetAddress.getAllByName} call in Twitch's OkHttp connection code: ad and
+ * tracking servers are refused, everything else is looked up by the phone as usual.
  */
 @SuppressWarnings("unused")
 public final class TwitchDns {
-    private static final String TAG = "TwitchMorphed";
-
-    private static final ExecutorService LOOKUPS = Executors.newCachedThreadPool(runnable -> {
-        Thread thread = new Thread(runnable, "TwitchMorphed-dns");
-        thread.setDaemon(true);
-        return thread;
-    });
-    private static final AppDns DNS = new AppDns(
-            InetAddress::getAllByName,
-            new DohResolver(new UrlConnectionHttp(2_000), StreamAdsPatch.LOGGER, System::currentTimeMillis),
-            LOOKUPS, StreamAdsPatch.LOGGER);
-
     private TwitchDns() {
     }
 
     public static InetAddress[] getAllByName(String host) throws UnknownHostException {
-        try {
-            return DNS.lookup(host);
-        } catch (UnknownHostException e) {
-            throw e;
-        } catch (Throwable t) {
-            // Never worse than without the patch: on any problem of our own, ask the phone's DNS directly.
-            Log.e(TAG, "DNS lookup failed for " + host, t);
-            return InetAddress.getAllByName(host);
+        if (HostBlocklist.isBlocked(host)) {
+            StreamAdsPatch.LOGGER.log("Blocked " + host);
+            throw new UnknownHostException("Blocked by Twitch Morphed: " + host);
         }
+        return InetAddress.getAllByName(host);
     }
 }
