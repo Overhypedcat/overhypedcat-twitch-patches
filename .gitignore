@@ -1,0 +1,22 @@
+# Gradle
+.gradle/
+**/build/
+!src/**/build/
+local.properties
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Original and patched apps (copyrighted), downloaded tools, signing key
+apk/
+dist/
+tools/
+signing/
+*.apk
+*.apkm
+
+# Logs
+*.log
+hs_err_pid*
