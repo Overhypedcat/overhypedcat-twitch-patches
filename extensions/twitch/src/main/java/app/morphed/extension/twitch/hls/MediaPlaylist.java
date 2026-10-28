@@ -51,8 +51,8 @@ public final class MediaPlaylist {
             this.live = live;
             this.discontinuity = discontinuity;
             this.programDateTime = programDateTime;
-            // Only trust the title when the playlist uses "live" titles or carries ad markers, so a
-            // format change at Twitch cannot turn every segment into an "ad" and freeze playback.
+            // Only trust the title while a stitched ad is announced, so neither a format change at
+            // Twitch nor an unrelated marker can turn ordinary segments into "ads".
             this.ad = (liveTitlesInUse && !live) || AdMarkers.isAdSegmentUrl(uri);
         }
 
@@ -145,7 +145,8 @@ public final class MediaPlaylist {
         trailer.addAll(0, pending);
 
         boolean hasAdTags = AdMarkers.hasAdTags(text);
-        boolean liveTitlesInUse = hasAdTags || text.contains(",live");
+        // A segment without a "live" title is only an ad while a stitched ad is announced.
+        boolean liveTitlesInUse = AdMarkers.hasStitchedAdTags(text);
         List<Segment> segments = new ArrayList<>(segmentUris.size());
         for (int i = 0; i < segmentUris.size(); i++) {
             segments.add(new Segment(segmentTags.get(i), segmentUris.get(i), segmentMaps.get(i),

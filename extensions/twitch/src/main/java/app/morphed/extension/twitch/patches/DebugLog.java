@@ -10,6 +10,7 @@ import android.os.Environment;
 import android.provider.MediaStore;
 import android.util.Log;
 
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -17,6 +18,8 @@ import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -37,6 +40,7 @@ public final class DebugLog {
     private static final String PREFERENCES = "twitch_morphed";
     private static final String KEY_ENABLED = "detailed_log";
     private static final long HEARTBEAT_SECONDS = 30;
+    private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss.SSS", Locale.US);
 
     private static final ExecutorService IO = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "TwitchMorphed-log");
@@ -52,6 +56,7 @@ public final class DebugLog {
     private static volatile Writer writer;
     private static volatile String fileName;
     private static ScheduledFuture<?> heartbeat;
+    private static ScheduledFuture<?> flusher;
     private static boolean checkedOnStart;
 
     private DebugLog() {
@@ -94,8 +99,20 @@ public final class DebugLog {
             Writer target = writer;
             if (target == null) return;
             try {
+                // Buffered; flush() runs once a second, so logging costs little even when it is busy.
                 target.write(line);
-                // Flushed every line: the app can be killed at any time and the log must survive it.
+            } catch (IOException e) {
+                Log.e(TAG, "Writing the log failed", e);
+            }
+        });
+    }
+
+    /** Writes buffered lines to the file; at most a second of log is lost if the app is killed. */
+    private static void flush() {
+        IO.execute(() -> {
+            Writer target = writer;
+            if (target == null) return;
+            try {
                 target.flush();
             } catch (IOException e) {
                 Log.e(TAG, "Writing the log failed", e);
@@ -107,7 +124,7 @@ public final class DebugLog {
         String name = "TwitchMorphed-log-" + new SimpleDateFormat("yyyy-MM-dd-HHmmss", Locale.US).format(new Date()) + ".txt";
         try {
             OutputStream out = open(context, name);
-            writer = new OutputStreamWriter(out, StandardCharsets.UTF_8);
+            writer = new BufferedWriter(new OutputStreamWriter(out, StandardCharsets.UTF_8), 64 * 1024);
             fileName = name;
         } catch (IOException | RuntimeException e) {
             Log.e(TAG, "Could not create the log file", e);
@@ -116,11 +133,14 @@ public final class DebugLog {
         log("Log started. Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + "), "
                 + Build.MANUFACTURER + " " + Build.MODEL + ", app " + appVersion(context));
         heartbeat = HEARTBEAT.scheduleWithFixedDelay(DebugLog::heartbeat, HEARTBEAT_SECONDS, HEARTBEAT_SECONDS, TimeUnit.SECONDS);
+        flusher = HEARTBEAT.scheduleWithFixedDelay(DebugLog::flush, 1, 1, TimeUnit.SECONDS);
     }
 
     private static void stop() {
         if (heartbeat != null) heartbeat.cancel(false);
+        if (flusher != null) flusher.cancel(false);
         heartbeat = null;
+        flusher = null;
         Writer current = writer;
         if (current == null) return;
         log("Log stopped.");
@@ -174,6 +194,6 @@ public final class DebugLog {
     }
 
     private static String timestamp() {
-        return new SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(new Date());
+        return LocalTime.now().format(TIME);
     }
 }

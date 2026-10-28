@@ -50,6 +50,25 @@ public class MediaPlaylistTest {
     }
 
     @Test
+    public void otherMarkersDoNotTurnSegmentsIntoAds() {
+        String text = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:5\n"
+                + "#EXT-X-DATERANGE:ID=\"t\",CLASS=\"twitch-trigger\",START-DATE=\"2026-10-28T12:00:00Z\"\n"
+                + "#EXTINF:2.000,live\nhttps://e/5.ts\n#EXTINF:2.000,\nhttps://e/6.ts\n";
+        MediaPlaylist playlist = MediaPlaylist.parse(text);
+
+        assertTrue(playlist.hasAdTags);
+        assertFalse(playlist.hasAdSegments());
+    }
+
+    @Test
+    public void untitledSegmentsBeforeAStitchedAdAreAds() {
+        String text = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:5\n" + Playlists.AD_DATERANGE + "\n"
+                + "#EXTINF:2.000,live\nhttps://e/5.ts\n#EXTINF:2.000,Amazon|1\nhttps://e/6.ts\n";
+
+        assertTrue(MediaPlaylist.parse(text).segments.get(1).isAd());
+    }
+
+    @Test
     public void playlistOfOnlyAdsIsAllAds() {
         MediaPlaylist playlist = MediaPlaylist.parse(Playlists.media("n", 100, "aa", true));
 

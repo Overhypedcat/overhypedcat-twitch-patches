@@ -45,6 +45,14 @@ public final class AdMarkers {
     }
 
     /**
+     * Markers of an ad stitched into the stream itself. Only then are segments without a "live"
+     * title ads; maf-ad and trigger markers alone show up on streams without any ad playing.
+     */
+    public static boolean hasStitchedAdTags(String text) {
+        return text.contains("stitched-ad") || text.contains("twitch-stitched") || text.contains("EXT-X-CUE-OUT");
+    }
+
+    /**
      * A tag line that tells the app an ad is playing. Dropped from rewritten playlists so the app
      * does not start its own (client side) ad.
      */
