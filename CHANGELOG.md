@@ -1,3 +1,9 @@
+## [1.1.2](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.1.1...v1.1.2) (2026-10-28)
+
+### Bug Fixes
+
+* Leave stream previews alone and hide the label when the ad ends ([6640bbc](https://github.com/Overhypedcat/overhypedcat-twitch-patches/commit/6640bbc93be149000d83482b9a6bb68a26923325))
+
 ## [1.1.2-dev.1](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.1.1...v1.1.2-dev.1) (2026-10-28)
 
 ### Bug Fixes
