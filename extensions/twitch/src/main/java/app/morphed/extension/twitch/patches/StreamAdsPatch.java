@@ -82,15 +82,6 @@ public final class StreamAdsPatch {
         return AD_BLOCKER.isWatching() && PlayerRefresher.watchedPlayer() != null;
     }
 
-    /** Whether a stream is being watched (vertical or full screen); false on the main page. */
-    static boolean isWatchingStream() {
-        try {
-            return watching();
-        } catch (Throwable t) {
-            return false;
-        }
-    }
-
     private static void showAdBlocked() {
         long now = System.currentTimeMillis();
         if (now - lastAdBlockedShownAt < AD_BLOCKED_DEBOUNCE_MS) return;

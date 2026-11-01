@@ -21,7 +21,7 @@ Morphe shows a banner when a new version of these patches is released.
 While you watch a stream (vertical or full screen), a small label in the top left corner of the video
 shows each blocked ad: "Blocking ads (360p)" while an ad in the stream is replaced (with the quality of
 the ad-free stream in use; during pre-rolls often only 360p is ad-free), and briefly "Ad blocked" when an
-ad the app plays itself is stopped. Nothing is blocked or shown on the main page.
+ad the app plays itself is stopped. The main page's banner and feed ads are blocked without a label.
 
 When Twitch changes something and ads may get through, the app shows a short message once per launch:
 
@@ -39,8 +39,8 @@ Details are in logcat under the tag `TwitchMorphed`.
 
 ## Block ad servers
 
-Twitch's ads come from its own ad server (`edge.ads.twitch.tv`). This patch refuses it while a stream
-is being watched (the main page is left alone), and refuses Twitch's tracking servers always; everything
+Twitch's ads, including the banner and feed ads on the main page, come from its own ad server
+(`edge.ads.twitch.tv`). This patch refuses it and Twitch's tracking servers inside the app; everything
 else connects as usual.
 
 ## Detailed log
