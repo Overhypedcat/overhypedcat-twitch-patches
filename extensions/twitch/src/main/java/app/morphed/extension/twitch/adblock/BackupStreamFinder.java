@@ -8,12 +8,15 @@ import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.net.URI;
 import java.net.URLEncoder;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletionService;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -60,12 +63,18 @@ public final class BackupStreamFinder {
      */
     static final long PLAYER_WAIT_MS = 1_500;
     /** How long a poll waits to refresh the backup already in use. */
-    static final long REFRESH_TIMEOUT_MS = 2_000;
+    static final long REFRESH_TIMEOUT_MS = 1_500;
     /** Requests that outlive their budget keep a thread until their own timeout; this caps how many. */
     private static final int MAX_THREADS = 8;
 
     private static final ExecutorService EXECUTOR = Executors.newFixedThreadPool(MAX_THREADS, runnable -> {
         Thread thread = new Thread(runnable, "TwitchMorphed-backup");
+        thread.setDaemon(true);
+        return thread;
+    });
+    /** Refreshes of the backup in use, kept apart so a search's slow requests cannot delay them. */
+    private static final ExecutorService REFRESHES = Executors.newFixedThreadPool(2, runnable -> {
+        Thread thread = new Thread(runnable, "TwitchMorphed-refresh");
         thread.setDaemon(true);
         return thread;
     });
@@ -108,18 +117,27 @@ public final class BackupStreamFinder {
         String key = UrlKey.of(target.url);
         Result committed = session.backupResults.get(key);
         if (committed != null) {
-            Future<String> refresh = EXECUTOR.submit(() -> fetchPlaylist(committed.url));
+            // Own threads: a search's slow requests must not hold up the stream already being served.
+            Future<String> refresh = REFRESHES.submit(() -> fetchPlaylist(committed.url));
             String playlist;
             try {
                 playlist = refresh.get(REFRESH_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-            } catch (TimeoutException e) {
+            } catch (TimeoutException | InterruptedException | ExecutionException e) {
                 refresh.cancel(true);
-                logger.log("Backup " + committed.playerType + " too slow to refresh");
-                return null;
-            } catch (InterruptedException | ExecutionException e) {
-                return null;
+                // Serving the last good backup playlist again keeps the stream on one source; cutting
+                // the ad instead would switch sources back and forth and stall the player.
+                logger.log("Backup " + committed.playerType + " too slow to refresh, serving its last playlist");
+                return committed;
             }
-            if (isClean(playlist)) return new Result(committed.playerType, playlist, committed.url, committed.resolution, committed.target);
+            if (playlist == null) {
+                logger.log("Backup " + committed.playerType + " refresh failed, serving its last playlist");
+                return committed;
+            }
+            if (isClean(playlist)) {
+                Result refreshed = new Result(committed.playerType, playlist, committed.url, committed.resolution, committed.target);
+                session.backupResults.put(key, refreshed);
+                return refreshed;
+            }
             session.backupResults.remove(key);
         }
 
@@ -143,41 +161,67 @@ public final class BackupStreamFinder {
             // A search started for another quality stored its result for that one.
             return result != null && key.equals(UrlKey.of(result.target)) ? result : null;
         } catch (TimeoutException e) {
-            logger.log("Backup search still running, cutting the ad out meanwhile");
-            return null;
+            // A lower quality clean stream may already be in while better ones are still being asked.
+            Result provisional = session.backupResults.get(key);
+            logger.log("Backup search still running, " + (provisional == null ? "cutting the ad out meanwhile"
+                    : "serving " + provisional.playerType + " " + provisional.resolution + " meanwhile"));
+            return provisional;
         } catch (InterruptedException | ExecutionException e) {
             return null;
         }
     }
 
-    /** Tries every player type at once and stores the best clean one for {@code target}. */
+    /**
+     * Tries every player type at once and stores the best clean one for {@code target}. A clean result
+     * is stored as soon as it arrives, so polls can use it; a better quality one replaces it if it comes
+     * in later. Nothing is stored when the ad break ended meanwhile.
+     */
     private Result search(StreamSession session, MasterPlaylist.Variant target) {
         String key = UrlKey.of(target.url);
+        int generation = session.breakGeneration.get();
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SEARCH_BUDGET_MS);
-        Map<String, Future<Attempt>> attempts = new LinkedHashMap<>();
-        for (String playerType : PLAYER_TYPES) {
+        CompletionService<Attempt> completions = new ExecutorCompletionService<>(EXECUTOR);
+        Map<Future<Attempt>, Integer> rankOf = new HashMap<>();
+        List<Future<Attempt>> futures = new ArrayList<>();
+        for (int rank = 0; rank < PLAYER_TYPES.size(); rank++) {
+            String playerType = PLAYER_TYPES.get(rank);
             Long failedAt = session.failedPlayerTypes.get(playerType);
             if (failedAt != null && clock.getAsLong() - failedAt < FAILED_TYPE_RETRY_MS) continue;
             String cachedMaster = session.backupMasters.get(playerType);
-            attempts.put(playerType, EXECUTOR.submit(() -> attempt(session, cachedMaster, target, playerType)));
+            Future<Attempt> future = completions.submit(() -> attempt(session, cachedMaster, target, playerType));
+            rankOf.put(future, rank);
+            futures.add(future);
         }
-        if (attempts.isEmpty()) return null;
+        if (futures.isEmpty()) return null;
 
         Result best = null;
+        int bestRank = Integer.MAX_VALUE;
+        boolean[] done = new boolean[PLAYER_TYPES.size()];
+        for (int rank = 0; rank < done.length; rank++) done[rank] = !rankOf.containsValue(rank);
         int failed = 0;
         String lastError = null;
-        for (Map.Entry<String, Future<Attempt>> entry : attempts.entrySet()) {
-            String playerType = entry.getKey();
+
+        for (int received = 0; received < futures.size(); received++) {
+            Future<Attempt> finished;
+            try {
+                finished = completions.poll(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+            } catch (InterruptedException e) {
+                break;
+            }
+            if (finished == null) {
+                logger.log("Backup search ran out of time");
+                break;
+            }
+            int rank = rankOf.get(finished);
+            String playerType = PLAYER_TYPES.get(rank);
+            done[rank] = true;
             Attempt attempt;
             try {
-                attempt = entry.getValue().get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
-            } catch (TimeoutException e) {
-                entry.getValue().cancel(true);
-                logger.log("Backup " + playerType + " ran out of time");
-                continue;
+                attempt = finished.get();
             } catch (InterruptedException | ExecutionException e) {
                 continue;
             }
+            if (session.breakGeneration.get() != generation) return null;
 
             if (attempt.failed) {
                 session.failedPlayerTypes.put(playerType, clock.getAsLong());
@@ -188,24 +232,35 @@ public final class BackupStreamFinder {
             if (attempt.master != null) session.backupMasters.put(playerType, attempt.master);
             else session.backupMasters.remove(playerType);
 
-            // Types are visited in preference order, so the first clean one is the best quality: use it
-            // at once instead of waiting for slower, lower quality types.
-            if (attempt.result != null) {
+            if (attempt.result != null && rank < bestRank) {
                 best = attempt.result;
-                break;
+                bestRank = rank;
+                session.backupResults.put(key, best);
+                logger.log("Clean " + playerType + " playlist " + best.resolution + " for " + session.channel);
+            } else if (attempt.result == null && !attempt.failed) {
+                logger.log("Backup " + playerType + " also has ads");
             }
-            if (!attempt.failed) logger.log("Backup " + playerType + " also has ads");
+            // Done once nothing better can still come in.
+            if (best != null && allDone(done, bestRank)) break;
         }
+        for (Future<Attempt> future : futures) future.cancel(true);
 
+        if (session.breakGeneration.get() != generation) return null;
         // Every type erroring (rather than having ads) points at a changed token or usher API.
-        if (best == null && failed == attempts.size()) problems.report(Problem.BACKUPS_UNAVAILABLE, lastError);
+        if (best == null && failed == futures.size()) problems.report(Problem.BACKUPS_UNAVAILABLE, lastError);
         if (best != null) {
-            session.backupResults.put(key, best);
             logger.log("Using " + best.playerType + " playlist " + best.resolution + " for " + session.channel);
         } else {
             session.lastEmptySearchAt = clock.getAsLong();
         }
         return best;
+    }
+
+    private static boolean allDone(boolean[] done, int beforeRank) {
+        for (int rank = 0; rank < beforeRank; rank++) {
+            if (!done[rank]) return false;
+        }
+        return true;
     }
 
     private Attempt attempt(StreamSession session, String cachedMaster, MasterPlaylist.Variant target, String playerType) {

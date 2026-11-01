@@ -6,6 +6,7 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class ClientAdsPatchTest {
@@ -35,6 +36,21 @@ public class ClientAdsPatchTest {
         ClientAdsPatch.markIneligible(reasons, RenamedReason.class);
 
         assertEquals(1, reasons.size());
+    }
+
+    @Test
+    public void readsTheFullCheckResult() {
+        Set<Object> onlyOurs = new LinkedHashSet<>();
+        onlyOurs.add(Reason.VAST_AD_INELIGIBLE_TURBO);
+        Set<Object> notOurs = new LinkedHashSet<>();
+        notOurs.add(Reason.VAST_AD_INELIGIBLE_PIP);
+
+        assertTrue(ClientAdsPatch.containsTurboReason(onlyOurs));
+        assertFalse(ClientAdsPatch.containsTurboReason(notOurs));
+        // Other cases of the app's shared return pass anything; none of it may throw.
+        ClientAdsPatch.onEligibilityDecided("not a set");
+        ClientAdsPatch.onEligibilityDecided(null);
+        ClientAdsPatch.onEligibilityDecided(onlyOurs);
     }
 
     @Test

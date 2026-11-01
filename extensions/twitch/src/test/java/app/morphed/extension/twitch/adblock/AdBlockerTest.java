@@ -216,6 +216,61 @@ public class AdBlockerTest {
     }
 
     @Test
+    public void lowerQualityCleanStreamIsUsedWhileABetterOneIsStillLoading() throws Exception {
+        backupHasAds("site", false);
+        http.getResponses.put("autoplay-1080.m3u8", Playlists.media("autoplay", 101, "llll", false));
+        http.delays.put("site-1080.m3u8", 3_000L);
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+
+        String first = blocker.process(NATIVE_1080, Playlists.media("n", 102, "llaa", true));
+        assertTrue(first.contains(Playlists.segment("autoplay", 104)));
+
+        // The better (source quality) stream arrives later and takes over from its next new segment;
+        // moments already shown from the 360p stream are not repeated.
+        Thread.sleep(3_500);
+        http.delays.clear();
+        http.getResponses.put("site-1080.m3u8", Playlists.media("site", 103, "llll", false));
+        String later = blocker.process(NATIVE_1080, Playlists.media("n", 103, "laaa", true));
+        assertTrue(later.contains(Playlists.segment("site", 105)));
+        assertFalse(later.contains(Playlists.segment("site", 104)));
+    }
+
+    @Test
+    public void slowRefreshKeepsServingTheBackupInUse() {
+        backupHasAds("site", false);
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+        blocker.process(NATIVE_1080, Playlists.media("n", 102, "llaa", true));
+
+        http.delays.put("site-1080.m3u8", 2_500L);
+        String out = blocker.process(NATIVE_1080, Playlists.media("n", 103, "laaa", true));
+
+        assertTrue(out.contains(Playlists.segment("site", 104)));
+        assertFalse(out.contains("/ads/"));
+    }
+
+    @Test
+    public void qualityLeftMidBreakDoesNotHoldTheBreakOpen() {
+        backupHasAds("site", false);
+        http.getResponses.put("site-720.m3u8", Playlists.media("site720", 101, "llll", false));
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+        blocker.process(NATIVE_1080, Playlists.media("n", 102, "llaa", true));
+
+        // The player switched to 720p during the break and never polls 1080p again.
+        now += 7_000;
+        blocker.process(NATIVE_720, Playlists.media("m", 106, "llll", false));
+        blocker.process(NATIVE_720, Playlists.media("m", 107, "llll", false));
+
+        assertEquals(1, refreshes);
+    }
+
+    @Test
+    public void otherPreviewPlayerTypesAreLeftAlone() {
+        assertTrue(AdBlocker.isPreview("https://usher.ttvnw.net/x.m3u8?token=%7B%22player_type%22%3A%22autoplay%22%7D"));
+        assertTrue(AdBlocker.isPreview("https://usher.ttvnw.net/x.m3u8?token=%7B%22player_type%22%3A%22creator_mode_preview%22%7D"));
+        assertFalse(AdBlocker.isPreview("https://usher.ttvnw.net/x.m3u8?token=%7B%22player_type%22%3A%22mobile_player%22%7D"));
+    }
+
+    @Test
     public void cleanSourceQualityDoesNotWaitForSlowerTypes() {
         backupHasAds("site", false);
         http.delays.put("\"playerType\":\"autoplay\"", 4_000L);

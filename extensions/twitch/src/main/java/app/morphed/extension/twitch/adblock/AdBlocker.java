@@ -8,7 +8,9 @@ import app.morphed.extension.twitch.hls.UrlKey;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
+import java.util.Arrays;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -140,10 +142,14 @@ public final class AdBlocker {
         return playerType.find() ? playerType.group(1) : null;
     }
 
-    /** Stream previews (the home feed thumbnails that play) request their token as a feed player. */
+    /** Player types the app uses for previews and other players that are not the stream being watched. */
+    private static final List<String> PREVIEW_PLAYER_TYPES = Arrays.asList(
+            "autoplay", "preview_theatre_mode", "creator_mode_preview", "clips", "creator_stories");
+
+    /** Stream previews (the home feed thumbnails that play) request their token as a feed or preview player. */
     static boolean isPreview(String usherUrl) {
         String playerType = tokenPlayerType(usherUrl);
-        return playerType != null && playerType.contains("feed");
+        return playerType != null && (playerType.contains("feed") || PREVIEW_PLAYER_TYPES.contains(playerType));
     }
 
     /**
@@ -261,7 +267,10 @@ public final class AdBlocker {
             if (variant == null) {
                 searchNote = " (quality unknown)";
             } else if (!session.searching.compareAndSet(false, true)) {
-                searchNote = " (another search is running)";
+                // Another poll (a retry, another quality) is asking right now: use the backup already in
+                // use without waiting, so the stream stays on one source instead of cutting the ad.
+                backup = session.backupResults.get(UrlKey.of(variant.url));
+                searchNote = " (another poll is searching)";
             } else {
                 long searchStart = clock.getAsLong();
                 try {
@@ -288,6 +297,7 @@ public final class AdBlocker {
         session.lastVariantUrl = session.variantUrlFor(url);
         PlaylistStitcher stitcher = session.stitcherFor(url);
         StreamSession.QualityState quality = session.qualityFor(url);
+        quality.lastPoll = session.lastSeen;
         logger.log(pollSummary(session, url, playlist, quality));
 
         if (!playlist.hasAds()) {
@@ -324,7 +334,11 @@ public final class AdBlocker {
         String output = stitcher.process(playlist, body, PlaylistStitcher.NATIVE);
         if (quality.swappingAds && ++quality.cleanPolls >= 2) {
             logger.log("Ad break over on " + session.channel);
-            session.endAdSwap(url);
+            session.endAdSwap(url, clock.getAsLong());
+            breaks.onBreakOver();
+        } else if (!quality.swappingAds && session.endLeftBreaks(clock.getAsLong())) {
+            // The player switched to this (clean) quality during the break and left the other one.
+            logger.log("Ad break over on " + session.channel + " (quality changed)");
             breaks.onBreakOver();
         }
         return output;

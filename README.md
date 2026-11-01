@@ -34,6 +34,7 @@ When Twitch changes something and ads may get through, the app shows a short mes
 | E4 | A live playlist URL the patch does not recognise |
 | E5 | The client-side ad check changed, those ads may play |
 | E6 | The Preferences screen changed, the Detailed log switch is missing |
+| E7 | The ad label could not be shown (ads are still blocked) |
 
 Details are in logcat under the tag `TwitchMorphed`.
 

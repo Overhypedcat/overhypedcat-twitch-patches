@@ -12,6 +12,9 @@ import app.morphed.extension.twitch.adblock.Problem;
 public final class ClientAdsPatch {
     static final String TURBO = "VAST_AD_INELIGIBLE_TURBO";
 
+    /** Set once the full check reports back; until then the message falls back to the partial reasons. */
+    private static volatile boolean fullCheckSeen;
+
     private ClientAdsPatch() {
     }
 
@@ -24,15 +27,39 @@ public final class ClientAdsPatch {
                 StreamAdsPatch.PROBLEMS.report(Problem.CLIENT_ADS_NOT_BLOCKED, "no reasons in " + reasonType);
                 return;
             }
-            // Only a set that was empty meant an ad would have played; otherwise it was not eligible anyway.
-            boolean wouldHavePlayed = reasons.isEmpty();
+            boolean noOtherReason = reasons.isEmpty();
             reasons.add(reason);
-            StreamAdsPatch.LOGGER.log("Client-side ad check: answered ineligible (" + reason + ")"
-                    + (wouldHavePlayed ? ", an ad was due" : ""));
-            if (wouldHavePlayed) StreamAdsPatch.adBlocked();
+            StreamAdsPatch.LOGGER.log("Client-side ad check: answered ineligible (" + reason + ")");
+            // Without the full check's result, only these few reasons are known.
+            if (!fullCheckSeen && noOtherReason) StreamAdsPatch.adBlocked();
         } catch (Throwable t) {
             StreamAdsPatch.PROBLEMS.report(Problem.CLIENT_ADS_NOT_BLOCKED, t.toString());
         }
+    }
+
+    /**
+     * The result of the app's full eligibility check (channel, spacing, subscription, ... and the
+     * reasons above). Only our Turbo reason in it means an ad was really due and is now blocked.
+     */
+    public static void onEligibilityDecided(Object result) {
+        try {
+            if (!(result instanceof Set)) return;
+            Set<?> reasons = (Set<?>) result;
+            if (!containsTurboReason(reasons)) return;
+            fullCheckSeen = true;
+            boolean adWasDue = reasons.size() == 1;
+            StreamAdsPatch.LOGGER.log("Client-side ad check result: " + reasons + (adWasDue ? ", an ad was due" : ""));
+            if (adWasDue) StreamAdsPatch.adBlocked();
+        } catch (Throwable t) {
+            StreamAdsPatch.LOGGER.log("Client-side ad check result unreadable: " + t);
+        }
+    }
+
+    static boolean containsTurboReason(Set<?> reasons) {
+        for (Object reason : reasons) {
+            if (reason instanceof Enum && TURBO.equals(((Enum<?>) reason).name())) return true;
+        }
+        return false;
     }
 
     /** The Turbo reason, or else any reason of the enum: any reason at all means no ad. */
