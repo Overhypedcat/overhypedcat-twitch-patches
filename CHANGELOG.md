@@ -1,3 +1,9 @@
+## [2.1.2](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v2.1.1...v2.1.2) (2026-11-01)
+
+### Bug Fixes
+
+* Ad feedback only while watching a stream, over its video ([c505e51](https://github.com/[secure]/overhypedcat-twitch-patches/commit/c505e51d83572303478aa078491e57b2030a0ce1))
+
 ## [2.1.1](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v2.1.0...v2.1.1) (2026-11-01)
 
 ### Bug Fixes
