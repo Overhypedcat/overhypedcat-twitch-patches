@@ -1,3 +1,9 @@
+## [2.1.0](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v2.0.0...v2.1.0) (2026-11-01)
+
+### New Features
+
+* Block the ads the app plays itself ([9be9f21](https://github.com/Overhypedcat/overhypedcat-twitch-patches/commit/9be9f21f8be90e85bb0216ea698fdc557b4d7aa3))
+
 ## [2.0.0](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v1.3.3...v2.0.0) (2026-10-28)
 
 ### ⚠ BREAKING CHANGES
