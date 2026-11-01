@@ -25,7 +25,7 @@ public final class StreamAdsPatch {
     };
 
     // Must come after LOGGER: static fields are set in the order they are written.
-    private static final Problem.Reporter PROBLEMS = new ProblemNotifier();
+    static final Problem.Reporter PROBLEMS = new ProblemNotifier();
     private static final AdBreakIndicator INDICATOR = new AdBreakIndicator();
     private static final AdBlocker AD_BLOCKER = createAdBlocker();
 

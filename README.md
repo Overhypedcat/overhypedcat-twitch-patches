@@ -30,6 +30,8 @@ When Twitch changes something and ads may get through, the app shows a short mes
 | E2 | No ad-free backup stream could be requested (token or usher API changed) |
 | E3 | Playlist processing crashed, the original playlist was used |
 | E4 | A live playlist URL the patch does not recognise |
+| E5 | The client-side ad check changed, those ads may play |
+| E6 | The Preferences screen changed, the Detailed log switch is missing |
 
 Details are in logcat under the tag `TwitchMorphed`.
 
