@@ -1,3 +1,9 @@
+## [2.1.5](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v2.1.4...v2.1.5) (2026-11-01)
+
+### Bug Fixes
+
+* Block the main page's banner and feed ads again, without a label ([bff8766](https://github.com/[secure]/overhypedcat-twitch-patches/commit/bff8766c43354e897f38036a17f149c45819374c))
+
 ## [2.1.4](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v2.1.3...v2.1.4) (2026-11-01)
 
 ### Bug Fixes
