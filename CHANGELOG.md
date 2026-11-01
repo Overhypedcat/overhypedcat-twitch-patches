@@ -1,3 +1,9 @@
+## [2.1.4](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v2.1.3...v2.1.4) (2026-11-01)
+
+### Bug Fixes
+
+* Only block the ad server while a stream is being watched ([768cd84](https://github.com/[secure]/overhypedcat-twitch-patches/commit/768cd84bb86b841cc71e323003136d2cfd967749))
+
 ## [2.1.3](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v2.1.2...v2.1.3) (2026-11-01)
 
 ### Bug Fixes
