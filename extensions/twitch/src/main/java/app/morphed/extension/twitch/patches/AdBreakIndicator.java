@@ -3,6 +3,7 @@ package app.morphed.extension.twitch.patches;
 import android.app.Activity;
 import android.app.Application;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
@@ -21,6 +22,8 @@ import android.widget.TextView;
 
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -29,6 +32,7 @@ import java.util.Map;
 final class AdBreakIndicator {
     /** Hide the label if no playlist update arrives for this long, for example after leaving the stream. */
     private static final long STALE_MS = 15_000;
+    private static final long FLASH_MS = 3_000;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable hideRunnable = this::hideNow;
@@ -38,7 +42,19 @@ final class AdBreakIndicator {
     private TextView label;
 
     void show(String quality) {
-        String text = quality == null ? "Blocking ads" : "Blocking ads (" + quality + ")";
+        show(quality == null ? "Blocking ads" : "Blocking ads (" + quality + ")", STALE_MS);
+    }
+
+    /** Shows {@code text} briefly, for blocks that are over at once (a refused ad request). */
+    void flash(String text) {
+        main.post(() -> {
+            // An ongoing break keeps its own text.
+            if (label != null && !text.contentEquals(label.getText())) return;
+            show(text, FLASH_MS);
+        });
+    }
+
+    private void show(String text, long visibleMs) {
         main.post(() -> {
             registerCallbacks();
             Activity activity = resumedActivity.get();
@@ -46,28 +62,34 @@ final class AdBreakIndicator {
                 DebugLog.log("Label: no screen in front, not shown");
                 return;
             }
-            if (label == null) DebugLog.log("Label shown: " + text + " on " + activity.getClass().getSimpleName());
 
-            ViewGroup decor = (ViewGroup) activity.getWindow().getDecorView();
-            if (label == null || label.getContext() != activity) {
-                hideNow();
-                label = createLabel(activity);
-                decor.addView(label, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.START));
-            }
-            if (!text.contentEquals(label.getText())) label.setText(text);
-            // Repositioned on every update so it follows the video into fullscreen, landscape or a smaller
-            // player. The view tree is only searched again when the remembered video view is gone.
+            // The video can be in another window than the activity (a full screen or theatre player);
+            // the label goes into the window of the video, so the player cannot cover it.
             View surface = video.get();
-            if (surface == null || !surface.isAttachedToWindow() || !surface.isShown()) {
-                surface = findVideoSurface(decor);
+            if (surface == null || !isOnScreen(surface)) {
+                surface = findVideoSurface(rootViews(activity));
                 video = new WeakReference<>(surface);
             }
-            place(activity, decor, label, surface);
+            ViewGroup host = surface != null && surface.getRootView() instanceof ViewGroup
+                    ? (ViewGroup) surface.getRootView()
+                    : (ViewGroup) activity.getWindow().getDecorView();
+
+            if (label == null || label.getParent() != host) {
+                hideNow();
+                label = createLabel(activity);
+                host.addView(label, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.START));
+                DebugLog.log("Label shown: " + text + " in " + host.getClass().getSimpleName()
+                        + (surface == null ? ", no video found, top of the screen"
+                        : " over " + surface.getClass().getSimpleName() + " " + describe(surface)));
+            }
+            if (!text.contentEquals(label.getText())) label.setText(text);
+            // Repositioned on every update so it follows the video into fullscreen, landscape or a smaller player.
+            place(activity, host, label, surface);
             // bringToFront relayouts the whole window, so only when something else covers the label.
-            if (decor.getChildAt(decor.getChildCount() - 1) != label) label.bringToFront();
+            if (host.getChildAt(host.getChildCount() - 1) != label) label.bringToFront();
             main.removeCallbacks(hideRunnable);
-            main.postDelayed(hideRunnable, STALE_MS);
+            main.postDelayed(hideRunnable, visibleMs);
         });
     }
 
@@ -137,27 +159,81 @@ final class AdBreakIndicator {
         }
     }
 
-    /** The largest visible SurfaceView or TextureView, which is what the player draws the video on. */
-    private static View findVideoSurface(View view) {
-        if (!view.isShown()) return null;
-        if (view instanceof SurfaceView || view instanceof TextureView) {
-            return view.getWidth() > 0 && view.getHeight() > 0 ? view : null;
-        }
-        if (!(view instanceof ViewGroup)) return null;
-
-        View largest = null;
-        long largestArea = 0;
-        ViewGroup group = (ViewGroup) view;
-        for (int i = 0; i < group.getChildCount(); i++) {
-            View surface = findVideoSurface(group.getChildAt(i));
-            if (surface == null) continue;
-            long area = (long) surface.getWidth() * surface.getHeight();
-            if (area > largestArea) {
-                largestArea = area;
-                largest = surface;
+    /**
+     * The video surface (SurfaceView or TextureView) with the most of it actually on screen, across
+     * all windows. Preloaded preview players sit in pages off screen and still count as "shown" to
+     * Android, so the visible area decides, not the size.
+     */
+    private static View findVideoSurface(List<View> roots) {
+        View best = null;
+        long bestArea = 0;
+        for (View root : roots) {
+            View candidate = mostVisibleSurface(root);
+            long area = visibleArea(candidate);
+            if (area > bestArea) {
+                bestArea = area;
+                best = candidate;
             }
         }
-        return largest;
+        return best;
+    }
+
+    private static View mostVisibleSurface(View view) {
+        if (view == null || !view.isShown()) return null;
+        if (view instanceof SurfaceView || view instanceof TextureView) return visibleArea(view) > 0 ? view : null;
+        if (!(view instanceof ViewGroup)) return null;
+
+        View best = null;
+        long bestArea = 0;
+        ViewGroup group = (ViewGroup) view;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View surface = mostVisibleSurface(group.getChildAt(i));
+            long area = visibleArea(surface);
+            if (area > bestArea) {
+                bestArea = area;
+                best = surface;
+            }
+        }
+        return best;
+    }
+
+    /** How many pixels of {@code view} are on screen, after clipping by its parents and the screen. */
+    private static long visibleArea(View view) {
+        if (view == null) return 0;
+        Rect visible = new Rect();
+        if (!view.getGlobalVisibleRect(visible)) return 0;
+        return (long) visible.width() * visible.height();
+    }
+
+    private static boolean isOnScreen(View view) {
+        return view.isAttachedToWindow() && view.isShown() && visibleArea(view) > 0;
+    }
+
+    private static String describe(View view) {
+        Rect visible = new Rect();
+        view.getGlobalVisibleRect(visible);
+        return view.getWidth() + "x" + view.getHeight() + ", visible " + visible.toShortString();
+    }
+
+    /**
+     * Root views of all the app's windows, the activity first. Read from WindowManagerGlobal; if
+     * Android blocks that, only the activity's window is searched.
+     */
+    private static List<View> rootViews(Activity activity) {
+        List<View> roots = new ArrayList<>();
+        roots.add(activity.getWindow().getDecorView());
+        try {
+            Class<?> global = Class.forName("android.view.WindowManagerGlobal");
+            Object instance = global.getMethod("getInstance").invoke(null);
+            Field views = global.getDeclaredField("mViews");
+            views.setAccessible(true);
+            for (Object view : (List<?>) views.get(instance)) {
+                if (view instanceof View && !roots.contains(view)) roots.add((View) view);
+            }
+        } catch (Throwable t) {
+            DebugLog.log("Label: other windows not readable (" + t + "), searching the activity only");
+        }
+        return roots;
     }
 
     private static int dp(Activity activity, int value) {

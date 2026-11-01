@@ -167,6 +167,38 @@ public class AdBlockerTest {
     }
 
     @Test
+    public void slowSearchDoesNotHoldThePlayerAndIsUsedOnTheNextPoll() throws Exception {
+        backupHasAds("site", false);
+        http.delays.put("site-1080.m3u8", 2_500L);
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+
+        long start = System.nanoTime();
+        String first = blocker.process(NATIVE_1080, Playlists.media("n", 102, "llaa", true));
+        long waitedMs = (System.nanoTime() - start) / 1_000_000;
+
+        assertTrue("player waited " + waitedMs + "ms", waitedMs < 2_200);
+        assertFalse(first.contains("/site/"));
+
+        Thread.sleep(2_000);
+        http.delays.clear();
+        String second = blocker.process(NATIVE_1080, Playlists.media("n", 103, "laaa", true));
+        assertTrue(second.contains(Playlists.segment("site", 104)));
+    }
+
+    @Test
+    public void cleanSourceQualityDoesNotWaitForSlowerTypes() {
+        backupHasAds("site", false);
+        http.delays.put("\"playerType\":\"autoplay\"", 4_000L);
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+
+        long start = System.nanoTime();
+        String out = blocker.process(NATIVE_1080, Playlists.media("n", 102, "llaa", true));
+
+        assertTrue(out.contains(Playlists.segment("site", 104)));
+        assertTrue((System.nanoTime() - start) / 1_000_000 < 1_500);
+    }
+
+    @Test
     public void oneCleanPollBetweenTwoAdsDoesNotEndTheBreak() {
         backupHasAds("site", false);
         blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));

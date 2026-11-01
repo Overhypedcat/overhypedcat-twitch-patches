@@ -7,6 +7,7 @@ import app.morphed.extension.twitch.hls.UrlKey;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -37,6 +38,10 @@ final class StreamSession {
     final Map<String, BackupStreamFinder.Result> backupResults = new ConcurrentHashMap<>();
     final Map<String, Long> failedPlayerTypes = new ConcurrentHashMap<>();
     final AtomicBoolean searching = new AtomicBoolean();
+    /** Guards {@link #pendingSearch}. */
+    final Object searchLock = new Object();
+    /** The backup search running in the background, if any; it can outlive the poll that started it. */
+    Future<BackupStreamFinder.Result> pendingSearch;
     /** When a search last found no ad-free player type; searches pause for a while after. */
     volatile long lastEmptySearchAt = Long.MIN_VALUE / 2;
 

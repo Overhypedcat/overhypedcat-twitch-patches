@@ -24,8 +24,12 @@ public final class ClientAdsPatch {
                 StreamAdsPatch.PROBLEMS.report(Problem.CLIENT_ADS_NOT_BLOCKED, "no reasons in " + reasonType);
                 return;
             }
+            // Only a set that was empty meant an ad would have played; otherwise it was not eligible anyway.
+            boolean wouldHavePlayed = reasons.isEmpty();
             reasons.add(reason);
-            StreamAdsPatch.LOGGER.log("Client-side ad check: answered ineligible (" + reason + ")");
+            StreamAdsPatch.LOGGER.log("Client-side ad check: answered ineligible (" + reason + ")"
+                    + (wouldHavePlayed ? ", an ad was due" : ""));
+            if (wouldHavePlayed) StreamAdsPatch.adBlocked();
         } catch (Throwable t) {
             StreamAdsPatch.PROBLEMS.report(Problem.CLIENT_ADS_NOT_BLOCKED, t.toString());
         }

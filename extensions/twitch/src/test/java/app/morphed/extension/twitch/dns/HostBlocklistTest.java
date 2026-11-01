@@ -22,6 +22,14 @@ public class HostBlocklistTest {
     }
 
     @Test
+    public void tellsAdServersFromTrackers() {
+        assertTrue(HostBlocklist.isAdServer("edge.ads.twitch.tv"));
+        assertTrue(HostBlocklist.isAdServer("aax.amazon-adsystem.com"));
+        assertFalse(HostBlocklist.isAdServer("spade.twitch.tv"));
+        assertFalse(HostBlocklist.isAdServer("player.stats.live-video.net"));
+    }
+
+    @Test
     public void leavesTwitchItselfAlone() {
         assertFalse(HostBlocklist.isBlocked("gql.twitch.tv"));
         assertFalse(HostBlocklist.isBlocked("usher.ttvnw.net"));

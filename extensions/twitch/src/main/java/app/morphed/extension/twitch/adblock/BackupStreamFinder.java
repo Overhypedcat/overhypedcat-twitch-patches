@@ -34,12 +34,15 @@ public final class BackupStreamFinder {
         public final String url;
         /** For example {@code 640x360}, or null for audio only. */
         public final String resolution;
+        /** The quality (master playlist URL) this backup stands in for. */
+        final String target;
 
-        Result(String playerType, String playlist, String url, String resolution) {
+        Result(String playerType, String playlist, String url, String resolution, String target) {
             this.playerType = playerType;
             this.playlist = playlist;
             this.url = url;
             this.resolution = resolution;
+            this.target = target;
         }
     }
 
@@ -49,16 +52,26 @@ public final class BackupStreamFinder {
 
     private static final long FAILED_TYPE_RETRY_MS = 15_000;
     private static final long EMPTY_SEARCH_COOLDOWN_MS = 10_000;
+    /** How long a search may run in the background; the player does not wait for all of it. */
+    static final long SEARCH_BUDGET_MS = 8_000;
     /**
-     * The player waits on our answer and gives up after 10 seconds, so everything a poll does here,
-     * re-checking the current backup included, has to finish well before that.
+     * How long a playlist poll waits for a search. Segments are 2 seconds long, so a longer wait
+     * starves the player; the poll cuts the ad out instead and the next one uses what was found.
      */
-    static final long SEARCH_BUDGET_MS = 5_000;
+    static final long PLAYER_WAIT_MS = 1_500;
+    /** How long a poll waits to refresh the backup already in use. */
+    static final long REFRESH_TIMEOUT_MS = 2_000;
     /** Requests that outlive their budget keep a thread until their own timeout; this caps how many. */
     private static final int MAX_THREADS = 8;
 
     private static final ExecutorService EXECUTOR = Executors.newFixedThreadPool(MAX_THREADS, runnable -> {
         Thread thread = new Thread(runnable, "TwitchMorphed-backup");
+        thread.setDaemon(true);
+        return thread;
+    });
+    /** Runs whole searches (one per stream at a time), which then fan out on {@link #EXECUTOR}. */
+    private static final ExecutorService SEARCHES = Executors.newCachedThreadPool(runnable -> {
+        Thread thread = new Thread(runnable, "TwitchMorphed-search");
         thread.setDaemon(true);
         return thread;
     });
@@ -86,16 +99,19 @@ public final class BackupStreamFinder {
         this.problems = problems;
     }
 
-    /** A clean playlist for {@code target}, or null when every player type has ads too. */
+    /**
+     * A clean playlist for {@code target}, or null for now: when every player type has ads too, or
+     * when the search takes longer than the player should wait. A search that runs over keeps going
+     * in the background and stores what it finds, so the next poll (about 2 seconds later) uses it.
+     */
     Result find(StreamSession session, MasterPlaylist.Variant target) {
-        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SEARCH_BUDGET_MS);
         String key = UrlKey.of(target.url);
         Result committed = session.backupResults.get(key);
         if (committed != null) {
             Future<String> refresh = EXECUTOR.submit(() -> fetchPlaylist(committed.url));
             String playlist;
             try {
-                playlist = refresh.get(SEARCH_BUDGET_MS, TimeUnit.MILLISECONDS);
+                playlist = refresh.get(REFRESH_TIMEOUT_MS, TimeUnit.MILLISECONDS);
             } catch (TimeoutException e) {
                 refresh.cancel(true);
                 logger.log("Backup " + committed.playerType + " too slow to refresh");
@@ -103,18 +119,41 @@ public final class BackupStreamFinder {
             } catch (InterruptedException | ExecutionException e) {
                 return null;
             }
-            if (isClean(playlist)) return new Result(committed.playerType, playlist, committed.url, committed.resolution);
+            if (isClean(playlist)) return new Result(committed.playerType, playlist, committed.url, committed.resolution, committed.target);
             session.backupResults.remove(key);
         }
 
-        // The player asks for a new playlist every couple of seconds. When no player type was ad-free,
-        // searching again right away only floods Twitch with requests, which it answers by throttling
-        // the whole app (chat included).
-        if (clock.getAsLong() - session.lastEmptySearchAt < EMPTY_SEARCH_COOLDOWN_MS) {
-            logger.log("Backup search paused (nothing ad-free " + (clock.getAsLong() - session.lastEmptySearchAt) + "ms ago)");
+        Future<Result> search;
+        synchronized (session.searchLock) {
+            if (session.pendingSearch != null && session.pendingSearch.isDone()) session.pendingSearch = null;
+            if (session.pendingSearch == null) {
+                // The player asks for a new playlist every couple of seconds. When no player type was
+                // ad-free, searching again right away only floods Twitch with requests, which it
+                // answers by throttling the whole app (chat included).
+                if (clock.getAsLong() - session.lastEmptySearchAt < EMPTY_SEARCH_COOLDOWN_MS) {
+                    logger.log("Backup search paused (nothing ad-free " + (clock.getAsLong() - session.lastEmptySearchAt) + "ms ago)");
+                    return null;
+                }
+                session.pendingSearch = SEARCHES.submit(() -> search(session, target));
+            }
+            search = session.pendingSearch;
+        }
+        try {
+            Result result = search.get(PLAYER_WAIT_MS, TimeUnit.MILLISECONDS);
+            // A search started for another quality stored its result for that one.
+            return result != null && key.equals(UrlKey.of(result.target)) ? result : null;
+        } catch (TimeoutException e) {
+            logger.log("Backup search still running, cutting the ad out meanwhile");
+            return null;
+        } catch (InterruptedException | ExecutionException e) {
             return null;
         }
+    }
 
+    /** Tries every player type at once and stores the best clean one for {@code target}. */
+    private Result search(StreamSession session, MasterPlaylist.Variant target) {
+        String key = UrlKey.of(target.url);
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SEARCH_BUDGET_MS);
         Map<String, Future<Attempt>> attempts = new LinkedHashMap<>();
         for (String playerType : PLAYER_TYPES) {
             Long failedAt = session.failedPlayerTypes.get(playerType);
@@ -149,13 +188,17 @@ public final class BackupStreamFinder {
             if (attempt.master != null) session.backupMasters.put(playerType, attempt.master);
             else session.backupMasters.remove(playerType);
 
-            // Types are visited in preference order, so the first clean one is the best quality.
-            if (best == null && attempt.result != null) best = attempt.result;
-            else if (attempt.result == null && !attempt.failed) logger.log("Backup " + playerType + " also has ads");
+            // Types are visited in preference order, so the first clean one is the best quality: use it
+            // at once instead of waiting for slower, lower quality types.
+            if (attempt.result != null) {
+                best = attempt.result;
+                break;
+            }
+            if (!attempt.failed) logger.log("Backup " + playerType + " also has ads");
         }
 
         // Every type erroring (rather than having ads) points at a changed token or usher API.
-        if (failed == attempts.size()) problems.report(Problem.BACKUPS_UNAVAILABLE, lastError);
+        if (best == null && failed == attempts.size()) problems.report(Problem.BACKUPS_UNAVAILABLE, lastError);
         if (best != null) {
             session.backupResults.put(key, best);
             logger.log("Using " + best.playerType + " playlist " + best.resolution + " for " + session.channel);
@@ -188,7 +231,7 @@ public final class BackupStreamFinder {
             String url = resolve(session.masterUrl, variant.url);
             String playlist = fetchPlaylist(url);
             if (playlist != null) {
-                if (isClean(playlist)) attempt.result = new Result(playerType, playlist, url, variant.resolution);
+                if (isClean(playlist)) attempt.result = new Result(playerType, playlist, url, variant.resolution, target.url);
                 return attempt;
             }
 

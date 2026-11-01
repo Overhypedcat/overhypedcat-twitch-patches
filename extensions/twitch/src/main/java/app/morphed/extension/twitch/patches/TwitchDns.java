@@ -26,6 +26,7 @@ public final class TwitchDns {
     public static InetAddress[] getAllByName(String host) throws UnknownHostException {
         if (HostBlocklist.isBlocked(host)) {
             report(host);
+            if (HostBlocklist.isAdServer(host)) StreamAdsPatch.adBlocked();
             throw new UnknownHostException("Blocked by Twitch Morphed: " + host);
         }
         return InetAddress.getAllByName(host);

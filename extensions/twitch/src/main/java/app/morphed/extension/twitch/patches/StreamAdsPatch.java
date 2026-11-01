@@ -32,6 +32,11 @@ public final class StreamAdsPatch {
     private StreamAdsPatch() {
     }
 
+    /** An ad the app wanted to show was stopped before it started (refused request, ineligible check). */
+    static void adBlocked() {
+        INDICATOR.flash("Ad blocked");
+    }
+
     public static boolean shouldInspect(String url) {
         try {
             if (AD_BLOCKER.shouldInspect(url)) return true;
