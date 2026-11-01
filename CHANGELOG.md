@@ -1,3 +1,9 @@
+## [2.1.3](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v2.1.2...v2.1.3) (2026-11-01)
+
+### Bug Fixes
+
+* Client-side ad blocking ran on few paths; label tied to the watched stream ([9d4fc80](https://github.com/[secure]/overhypedcat-twitch-patches/commit/9d4fc80731b02735a895fdf9bf790af53e8a2041))
+
 ## [2.1.2](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v2.1.1...v2.1.2) (2026-11-01)
 
 ### Bug Fixes
