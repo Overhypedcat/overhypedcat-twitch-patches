@@ -1,3 +1,9 @@
+## [2.1.1](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v2.1.0...v2.1.1) (2026-11-01)
+
+### Bug Fixes
+
+* Visible "Blocking ads" label and no 5 second stalls during an ad ([9d1d67f](https://github.com/Overhypedcat/overhypedcat-twitch-patches/commit/9d1d67f3b25b966f07e57370e47b9fd890020c7f))
+
 ## [2.1.0](https://github.com/Overhypedcat/overhypedcat-twitch-patches/compare/v2.0.0...v2.1.0) (2026-11-01)
 
 ### New Features

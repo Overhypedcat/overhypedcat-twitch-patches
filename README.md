@@ -58,7 +58,7 @@ Commits to `dev` publish pre-releases, merges to `main` publish releases
 ## Patches
 
 <!-- PATCHES_START EXPANDED -->
-> **[v2.1.0](https://github.com/Overhypedcat/overhypedcat-twitch-patches/releases/tag/v2.1.0)**&nbsp;&nbsp;•&nbsp;&nbsp;`main`&nbsp;&nbsp;•&nbsp;&nbsp;4 patches total
+> **[v2.1.1](https://github.com/Overhypedcat/overhypedcat-twitch-patches/releases/tag/v2.1.1)**&nbsp;&nbsp;•&nbsp;&nbsp;`main`&nbsp;&nbsp;•&nbsp;&nbsp;4 patches total
 <details open>
 <summary>Twitch&nbsp;&nbsp;•&nbsp;&nbsp;4 patches</summary>
 <br>
