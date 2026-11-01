@@ -64,8 +64,8 @@ public final class StreamAdsPatch {
             showAdBlocked();
             return;
         }
-        // A pre-roll is requested as the stream opens, before its first playlist: check again once
-        // the player had time to start. Still no stream means a main page (banner or feed) ad.
+        // A client-side ad is checked as the stream opens, before its first playlist: check again
+        // once the player had time to start. Still no stream means nothing to show it on.
         if (adBlockedPending) return;
         adBlockedPending = true;
         MAIN.postDelayed(() -> {
@@ -73,13 +73,22 @@ public final class StreamAdsPatch {
             if (watching()) {
                 showAdBlocked();
             } else {
-                LOGGER.log("Ad request blocked outside a stream (no label)");
+                LOGGER.log("Ad blocked outside a stream (no label)");
             }
         }, STREAM_START_MS);
     }
 
     private static boolean watching() {
         return AD_BLOCKER.isWatching() && PlayerRefresher.watchedPlayer() != null;
+    }
+
+    /** Whether a stream is being watched (vertical or full screen); false on the main page. */
+    static boolean isWatchingStream() {
+        try {
+            return watching();
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     private static void showAdBlocked() {

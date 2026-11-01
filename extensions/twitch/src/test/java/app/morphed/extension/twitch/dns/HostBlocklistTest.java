@@ -42,9 +42,20 @@ public class HostBlocklistTest {
     }
 
     @Test
+    public void adServersAreOnlyBlockedWhileWatchingAStream() {
+        // Main page: left alone.
+        assertFalse(TwitchDns.shouldBlock("edge.ads.twitch.tv", false));
+        // In a stream (vertical or full screen): blocked.
+        assertTrue(TwitchDns.shouldBlock("edge.ads.twitch.tv", true));
+        // Tracking is not an ad: blocked everywhere. Twitch itself: never.
+        assertTrue(TwitchDns.shouldBlock("spade.twitch.tv", false));
+        assertFalse(TwitchDns.shouldBlock("gql.twitch.tv", true));
+    }
+
+    @Test
     public void blockedServerIsRefusedAndOthersAreLookedUpNormally() throws Exception {
         try {
-            TwitchDns.getAllByName("edge.ads.twitch.tv");
+            TwitchDns.getAllByName("spade.twitch.tv");
             fail();
         } catch (UnknownHostException expected) {
             assertTrue(expected.getMessage().contains("Blocked"));
