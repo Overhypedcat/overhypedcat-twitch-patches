@@ -27,7 +27,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * A small label in the top left corner of the video while an ad break is being blocked.
+ * A small label in the top left corner of the stream's video while an ad is being blocked, in the
+ * vertical and the full screen player. Never shown without a stream video on screen.
  */
 final class AdBreakIndicator {
     /** Hide the label if no playlist update arrives for this long, for example after leaving the stream. */
@@ -70,9 +71,13 @@ final class AdBreakIndicator {
                 surface = findVideoSurface(rootViews(activity));
                 video = new WeakReference<>(surface);
             }
-            ViewGroup host = surface != null && surface.getRootView() instanceof ViewGroup
-                    ? (ViewGroup) surface.getRootView()
-                    : (ViewGroup) activity.getWindow().getDecorView();
+            // The label belongs on the stream's video; without one on screen there is nothing to show it on.
+            if (surface == null || !(surface.getRootView() instanceof ViewGroup)) {
+                if (label != null) hideNow();
+                DebugLog.log("Label not shown (" + text + "): no stream video on screen");
+                return;
+            }
+            ViewGroup host = (ViewGroup) surface.getRootView();
 
             if (label == null || label.getParent() != host) {
                 hideNow();
@@ -80,8 +85,7 @@ final class AdBreakIndicator {
                 host.addView(label, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.START));
                 DebugLog.log("Label shown: " + text + " in " + host.getClass().getSimpleName()
-                        + (surface == null ? ", no video found, top of the screen"
-                        : " over " + surface.getClass().getSimpleName() + " " + describe(surface)));
+                        + " over " + surface.getClass().getSimpleName() + " " + describe(surface));
             }
             if (!text.contentEquals(label.getText())) label.setText(text);
             // Repositioned on every update so it follows the video into fullscreen, landscape or a smaller player.
@@ -127,22 +131,17 @@ final class AdBreakIndicator {
         return view;
     }
 
-    /** Top left corner of the video, or of the screen below the status bar when no video is found. */
+    /**
+     * Top left corner of the part of the video that is on screen: in full screen the video can be
+     * cropped (wider than the screen), and its own corner is then off screen.
+     */
     private static void place(Activity activity, ViewGroup decor, TextView label, View video) {
         int margin = dp(activity, 8);
-        int left = 0;
-        int top;
-        if (video != null) {
-            int[] videoLocation = new int[2];
-            int[] decorLocation = new int[2];
-            video.getLocationInWindow(videoLocation);
-            decor.getLocationInWindow(decorLocation);
-            left = videoLocation[0] - decorLocation[0];
-            top = videoLocation[1] - decorLocation[1];
-        } else {
-            WindowInsets insets = decor.getRootWindowInsets();
-            top = insets != null ? insets.getSystemWindowInsetTop() : 0;
-        }
+        // Visible rect in the coordinates of the window's root view, which is the label's parent.
+        Rect visible = new Rect();
+        video.getGlobalVisibleRect(visible);
+        int left = Math.max(0, visible.left);
+        int top = Math.max(0, visible.top);
         // In fullscreen there is no status bar and the video reaches the screen edge, where the
         // camera cutout can be (on the left in landscape). Keep the label clear of it.
         WindowInsets insets = decor.getRootWindowInsets();

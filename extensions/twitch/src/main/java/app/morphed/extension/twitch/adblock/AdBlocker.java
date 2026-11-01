@@ -35,6 +35,8 @@ public final class AdBlocker {
      * longer than that can a new playlist URL be the same stream moved to another server.
      */
     private static final long MOVED_GAP_MS = 2_500;
+    /** A watched stream polls every ~2 seconds; quiet this long means no stream is open. */
+    private static final long WATCHING_MS = 6_000;
     private static final int MAX_PREVIEW_VARIANTS = 500;
     private static final Pattern TOKEN_PARAMETER = Pattern.compile("[?&]token=([^&]+)");
     private static final Pattern PLAYER_TYPE = Pattern.compile("\"player_type\"\\s*:\\s*\"([^\"]+)\"");
@@ -98,6 +100,18 @@ public final class AdBlocker {
 
     public boolean isMasterPlaylist(String url) {
         return url.contains("usher.ttvnw.net") && CHANNEL.matcher(url).find() && !url.contains("picture-by-picture");
+    }
+
+    /**
+     * Whether a stream is being watched right now: a stream's player asks for a new playlist about
+     * every 2 seconds, previews are not streams here (they are ignored), and the main page has none.
+     */
+    public boolean isWatching() {
+        long now = clock.getAsLong();
+        for (StreamSession session : sessionsByVariant.values()) {
+            if (session.lastVariantUrl != null && now - session.lastSeen < WATCHING_MS) return true;
+        }
+        return false;
     }
 
     public boolean isKnownMediaPlaylist(String url) {

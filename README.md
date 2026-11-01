@@ -18,9 +18,11 @@ Morphe shows a banner when a new version of these patches is released.
 
 ## Error codes
 
-While an ad break is being blocked, a small "Blocking ads" label shows in the top left corner, with the
-quality of the ad-free stream in use, for example "Blocking ads (360p)". During pre-rolls often only the
-360p stream is ad-free; the original quality returns when the break ends.
+While you watch a stream (vertical or full screen), a small label in the top left corner of the video
+shows each blocked ad: "Blocking ads (360p)" while an ad in the stream is replaced (with the quality of
+the ad-free stream in use; during pre-rolls often only 360p is ad-free), and briefly "Ad blocked" when an
+ad the app plays itself is stopped. Nothing is shown on the main page; its banner and feed ads are
+blocked without a message.
 
 When Twitch changes something and ads may get through, the app shows a short message once per launch:
 

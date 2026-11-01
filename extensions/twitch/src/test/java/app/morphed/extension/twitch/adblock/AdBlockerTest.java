@@ -167,6 +167,36 @@ public class AdBlockerTest {
     }
 
     @Test
+    public void watchingOnlyWhileAStreamPolls() {
+        // setUp loaded the master playlist only: the stream is opening, not playing yet.
+        assertFalse(blocker.isWatching());
+
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+        assertTrue(blocker.isWatching());
+
+        now += 3_000;
+        assertTrue(blocker.isWatching());
+
+        // Left the stream: no playlist for a while.
+        now += 4_000;
+        assertFalse(blocker.isWatching());
+    }
+
+    @Test
+    public void previewsOnTheMainPageAreNotWatching() {
+        BackupStreamFinder finder = new BackupStreamFinder(http, new AccessTokenClient(http, "device"), Logger.NONE, () -> now,
+                Problem.Reporter.NONE);
+        AdBlocker fresh = new AdBlocker(finder, Logger.NONE, () -> now, AdBlocker.BreakListener.NONE, Problem.Reporter.NONE);
+        String previewMaster = "https://usher.ttvnw.net/api/v2/channel/hls/other.m3u8?allow_source=true"
+                + "&token=%7B%22player_type%22%3A%22mobile-feed%22%7D&sig=s";
+        String previewVariant = "https://video-weaver.example.hls.ttvnw.net/v1/playlist/preview.m3u8";
+        fresh.process(previewMaster, Playlists.master(previewVariant));
+
+        assertFalse(fresh.shouldInspect(previewVariant));
+        assertFalse(fresh.isWatching());
+    }
+
+    @Test
     public void slowSearchDoesNotHoldThePlayerAndIsUsedOnTheNextPoll() throws Exception {
         backupHasAds("site", false);
         http.delays.put("site-1080.m3u8", 2_500L);

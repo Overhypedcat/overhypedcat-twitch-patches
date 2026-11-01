@@ -1,5 +1,7 @@
 package app.morphed.extension.twitch.patches;
 
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import app.morphed.extension.twitch.adblock.AccessTokenClient;
@@ -32,10 +34,30 @@ public final class StreamAdsPatch {
     private StreamAdsPatch() {
     }
 
-    /** An ad the app wanted to show was stopped before it started (refused request, ineligible check). */
+    /**
+     * An ad the app wanted to show was stopped before it started (refused request, ineligible check).
+     * Shown only while a stream is being watched; on the main page the same requests are for banner
+     * and feed ads, which stay blocked without a message.
+     */
     static void adBlocked() {
-        INDICATOR.flash("Ad blocked");
+        if (AD_BLOCKER.isWatching()) {
+            INDICATOR.flash("Ad blocked");
+            return;
+        }
+        // A pre-roll is requested as the stream opens, before its first playlist: check again once
+        // the player had time to start. Still no stream means a main page (banner or feed) ad.
+        MAIN.postDelayed(() -> {
+            if (AD_BLOCKER.isWatching()) {
+                INDICATOR.flash("Ad blocked");
+            } else {
+                LOGGER.log("Ad request blocked outside a stream (no label)");
+            }
+        }, STREAM_START_MS);
     }
+
+    private static final Handler MAIN = new Handler(Looper.getMainLooper());
+    /** Time for a stream that is being opened to fetch its first playlists. */
+    private static final long STREAM_START_MS = 4_000;
 
     public static boolean shouldInspect(String url) {
         try {
