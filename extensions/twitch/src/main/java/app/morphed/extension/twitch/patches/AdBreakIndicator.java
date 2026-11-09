@@ -127,6 +127,12 @@ final class AdBreakIndicator {
             DebugLog.log("Label not shown (" + text + "): no stream playing");
             return false;
         }
+        if (PlayerRefresher.playsAudioOnly(watched)) {
+            // No video to put it on (its hidden view would place the label over the header).
+            hideNow();
+            DebugLog.log("Label not shown (" + text + "): audio only");
+            return fallbackToast(text, duringBreak);
+        }
         // During a break this runs on every poll: while the label still sits over a visible video,
         // only its text and timeout change, without searching every window for the video again.
         View current = video.get();
