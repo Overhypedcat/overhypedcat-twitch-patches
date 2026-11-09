@@ -46,6 +46,10 @@ final class AdBreakIndicator {
     /** Twitch's player view; its video surface is the one to label. Not obfuscated. */
     private static final String TWITCH_PLAYER_VIEW = "TwitchPlayerView";
 
+    /** WindowManagerGlobal and its list of window roots, looked up once (main thread only). */
+    private static Object windowManager;
+    private static Field windowViews;
+
     private final Problem.Reporter problems;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable hideRunnable = this::hideNow;
@@ -108,6 +112,21 @@ final class AdBreakIndicator {
             DebugLog.log("Label not shown (" + text + "): no stream playing");
             return;
         }
+        // During a break this runs on every poll: while the label still sits over a visible video,
+        // only its text and timeout change, without searching every window for the video again.
+        View current = video.get();
+        if (label != null && label.isAttachedToWindow() && current != null && current.isShown()
+                && visibleArea(current) > 0 && label.getParent() instanceof ViewGroup
+                && label.getRootView() == current.getRootView()) {
+            if (!text.contentEquals(label.getText())) label.setText(text);
+            ViewGroup parent = (ViewGroup) label.getParent();
+            // The video can move without a layout of its own (a dragged mini player, a scrolling parent).
+            place(parent, label, current);
+            if (parent.getChildAt(parent.getChildCount() - 1) != label) label.bringToFront();
+            main.removeCallbacks(hideRunnable);
+            main.postDelayed(hideRunnable, visibleMs);
+            return;
+        }
         View surface = findWatchedVideo(watched);
         if (surface == null) {
             hideNow();
@@ -118,6 +137,9 @@ final class AdBreakIndicator {
         if (host == null) {
             hideNow();
             DebugLog.log("Label not shown (" + text + "): no window to show it in");
+            // The video is on screen but the label cannot be added next to it: the block is invisible.
+            problems.report(Problem.LABEL_FAILED, "no window to show the label in, video in "
+                    + surface.getRootView().getClass().getSimpleName());
             return;
         }
 
@@ -257,11 +279,14 @@ final class AdBreakIndicator {
         List<View> roots = new ArrayList<>();
         if (activity != null) roots.add(activity.getWindow().getDecorView());
         try {
-            Class<?> global = Class.forName("android.view.WindowManagerGlobal");
-            Object instance = global.getMethod("getInstance").invoke(null);
-            Field views = global.getDeclaredField("mViews");
-            views.setAccessible(true);
-            for (Object view : new ArrayList<>((List<?>) views.get(instance))) {
+            if (windowViews == null) {
+                Class<?> global = Class.forName("android.view.WindowManagerGlobal");
+                windowManager = global.getMethod("getInstance").invoke(null);
+                Field views = global.getDeclaredField("mViews");
+                views.setAccessible(true);
+                windowViews = views;
+            }
+            for (Object view : new ArrayList<>((List<?>) windowViews.get(windowManager))) {
                 if (view instanceof View && !roots.contains(view)) roots.add((View) view);
             }
         } catch (Throwable t) {
