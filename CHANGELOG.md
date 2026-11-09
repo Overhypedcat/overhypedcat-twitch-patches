@@ -1,3 +1,9 @@
+## [3.0.3](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v3.0.2...v3.0.3) (2026-11-09)
+
+### Bug Fixes
+
+* No ad label in picture in picture or the mini player ([5aa9f92](https://github.com/[secure]/overhypedcat-twitch-patches/commit/5aa9f92c93a80f8096a781227cd976482babc8f7))
+
 ## [3.0.2](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v3.0.1...v3.0.2) (2026-11-09)
 
 ### Bug Fixes
