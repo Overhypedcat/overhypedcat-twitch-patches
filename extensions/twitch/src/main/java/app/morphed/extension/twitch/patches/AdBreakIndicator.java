@@ -149,7 +149,15 @@ final class AdBreakIndicator {
             main.postDelayed(hideRunnable, visibleMs);
             return true;
         }
-        View surface = findWatchedVideo(watched);
+        List<View> previews = new ArrayList<>();
+        View surface = findWatchedVideo(watched, previews);
+        if (surface == null && !previews.isEmpty()) {
+            // Only feed previews are on screen (the stream plays on in the background or a mini
+            // player that is not visible): the user is looking for a stream, so nothing is shown.
+            hideNow();
+            DebugLog.log("Label not shown (" + text + "): only feed previews on screen");
+            return false;
+        }
         if (surface == null) {
             hideNow();
             DebugLog.log("Label not shown (" + text + "): the stream's video is not on screen");
@@ -245,10 +253,18 @@ final class AdBreakIndicator {
      * The video view of {@code watched}: a SurfaceView whose surface is the one the player draws on,
      * else the most visible video view inside Twitch's player view, else the most visible one.
      */
-    private View findWatchedVideo(Player watched) {
+    private View findWatchedVideo(Player watched, List<View> previews) {
         Surface surface = PlayerRefresher.surfaceOf(watched);
+        List<View> all = new ArrayList<>();
+        for (View root : rootViews(resumedActivity.get())) collectVideoViews(root, all);
+        // Videos in a scrolling list are feed previews (Live, Following, vertical feed), never the
+        // stream being watched: Twitch's TextureViews cannot be matched to their player, so without
+        // this the most visible preview would get the label of a stream playing elsewhere.
         List<View> candidates = new ArrayList<>();
-        for (View root : rootViews(resumedActivity.get())) collectVideoViews(root, candidates);
+        for (View view : all) {
+            if (inScrollingList(view)) previews.add(view);
+            else candidates.add(view);
+        }
 
         for (View candidate : candidates) {
             if (surface != null && candidate instanceof SurfaceView
@@ -283,6 +299,17 @@ final class AdBreakIndicator {
             }
         }
         return best;
+    }
+
+    /**
+     * Whether {@code video} is an item of a vertically scrolling list. Twitch's feeds are lists of
+     * playing previews; the stream and past broadcast screens keep their player outside any list.
+     * Decided by the layout, not by player types, which Twitch changes.
+     */
+    private static boolean inScrollingList(View video) {
+        return Ancestors.any(video,
+                view -> view.getParent() instanceof View ? (View) view.getParent() : null,
+                view -> view instanceof ViewGroup && (view.canScrollVertically(1) || view.canScrollVertically(-1)));
     }
 
     private static boolean insideTwitchPlayer(View view) {
