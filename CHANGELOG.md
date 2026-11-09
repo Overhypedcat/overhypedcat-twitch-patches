@@ -1,3 +1,9 @@
+## [3.0.1](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v3.0.0...v3.0.1) (2026-11-09)
+
+### Bug Fixes
+
+* In Audio Only mode the ad block shows as a message instead of a misplaced label ([1532248](https://github.com/[secure]/overhypedcat-twitch-patches/commit/1532248d9dad7fb76bfd701c09a04c46f545f52f))
+
 ## [3.0.0](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v2.1.5...v3.0.0) (2026-11-09)
 
 ### ⚠ BREAKING CHANGES
