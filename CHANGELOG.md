@@ -1,3 +1,9 @@
+## [3.0.2](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v3.0.1...v3.0.2) (2026-11-09)
+
+### Bug Fixes
+
+* No ad label on feed previews while scrolling ([8790ff3](https://github.com/[secure]/overhypedcat-twitch-patches/commit/8790ff3f0c5a44982729a3590f97d6dd4a1cc38c))
+
 ## [3.0.1](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v3.0.0...v3.0.1) (2026-11-09)
 
 ### Bug Fixes

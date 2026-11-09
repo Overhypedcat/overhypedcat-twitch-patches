@@ -1,7 +1,7 @@
 {
-  "created_at": "2026-11-09T11:09:10",
-  "description": "## [3.0.1](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v3.0.0...v3.0.1) (2026-11-09)\n\n### Bug Fixes\n\n* In Audio Only mode the ad block shows as a message instead of a misplaced label ([1532248](https://github.com/[secure]/overhypedcat-twitch-patches/commit/1532248d9dad7fb76bfd701c09a04c46f545f52f))",
-  "download_url": "https://github.com/Overhypedcat/overhypedcat-twitch-patches/releases/download/v3.0.1/patches-3.0.1.mpp",
+  "created_at": "2026-11-09T11:36:44",
+  "description": "## [3.0.2](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v3.0.1...v3.0.2) (2026-11-09)\n\n### Bug Fixes\n\n* No ad label on feed previews while scrolling ([8790ff3](https://github.com/[secure]/overhypedcat-twitch-patches/commit/8790ff3f0c5a44982729a3590f97d6dd4a1cc38c))",
+  "download_url": "https://github.com/Overhypedcat/overhypedcat-twitch-patches/releases/download/v3.0.2/patches-3.0.2.mpp",
   "signature_download_url": "",
-  "version": "3.0.1"
+  "version": "3.0.2"
 }
