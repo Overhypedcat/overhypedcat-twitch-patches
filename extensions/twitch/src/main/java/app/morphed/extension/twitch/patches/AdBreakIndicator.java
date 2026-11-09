@@ -23,6 +23,7 @@ import android.view.ViewParent;
 import android.view.WindowInsets;
 import android.widget.FrameLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.amazonaws.ivs.player.Player;
 
@@ -58,6 +59,9 @@ final class AdBreakIndicator {
     private WeakReference<View> video = new WeakReference<>(null);
     private boolean callbacksRegistered;
     private TextView label;
+    private final ToastThrottle toasts = new ToastThrottle();
+    /** The fallback toast on screen (or recently shown), cancelled when the label shows. */
+    private Toast toast;
 
     AdBreakIndicator(Problem.Reporter problems) {
         this.problems = problems;
@@ -72,21 +76,31 @@ final class AdBreakIndicator {
         show(quality == null ? "Blocking ads" : "Blocking ads (" + quality + ")", STALE_MS);
     }
 
-    /** Shows {@code text} briefly, for blocks that are over at once (a refused ad request). */
-    void flash(String text) {
+    /**
+     * Shows {@code text} briefly, for blocks that are over at once (a refused ad). {@code onShown}
+     * runs (main thread) only if the user got to see it, as a label or a toast.
+     */
+    void flash(String text, Runnable onShown) {
         main.post(() -> safely(() -> {
-            // An ongoing break keeps its own text.
-            if (label != null && !text.contentEquals(label.getText())) return;
-            showNow(text, FLASH_MS);
+            // An ongoing break keeps its own text; its label already tells the user.
+            if (label != null && !text.contentEquals(label.getText())) {
+                onShown.run();
+                return;
+            }
+            if (showNow(text, FLASH_MS, false)) onShown.run();
         }));
     }
 
+    /** The break is over. */
     void hide() {
-        main.post(() -> safely(this::hideNow));
+        main.post(() -> safely(() -> {
+            toasts.breakOver();
+            hideNow();
+        }));
     }
 
     private void show(String text, long visibleMs) {
-        main.post(() -> safely(() -> showNow(text, visibleMs)));
+        main.post(() -> safely(() -> showNow(text, visibleMs, true)));
     }
 
     /** Main thread work must never crash Twitch: failures become an error message (E7). */
@@ -104,13 +118,14 @@ final class AdBreakIndicator {
         }
     }
 
-    private void showNow(String text, long visibleMs) {
+    /** Returns whether the user got to see it (label or toast); {@code duringBreak} for break labels. */
+    private boolean showNow(String text, long visibleMs, boolean duringBreak) {
         registerCallbacks();
         Player watched = PlayerRefresher.watchedPlayer();
         if (watched == null) {
             hideNow();
             DebugLog.log("Label not shown (" + text + "): no stream playing");
-            return;
+            return false;
         }
         // During a break this runs on every poll: while the label still sits over a visible video,
         // only its text and timeout change, without searching every window for the video again.
@@ -118,6 +133,7 @@ final class AdBreakIndicator {
         if (label != null && label.isAttachedToWindow() && current != null && current.isShown()
                 && visibleArea(current) > 0 && label.getParent() instanceof ViewGroup
                 && label.getRootView() == current.getRootView()) {
+            dismissToast();
             if (!text.contentEquals(label.getText())) label.setText(text);
             ViewGroup parent = (ViewGroup) label.getParent();
             // The video can move without a layout of its own (a dragged mini player, a scrolling parent).
@@ -125,22 +141,21 @@ final class AdBreakIndicator {
             if (parent.getChildAt(parent.getChildCount() - 1) != label) label.bringToFront();
             main.removeCallbacks(hideRunnable);
             main.postDelayed(hideRunnable, visibleMs);
-            return;
+            return true;
         }
         View surface = findWatchedVideo(watched);
         if (surface == null) {
             hideNow();
             DebugLog.log("Label not shown (" + text + "): the stream's video is not on screen");
-            return;
+            // Something plays with sound but its video cannot be found (audio only, a player in
+            // another window): the block is still shown, as a short message.
+            return fallbackToast(text, duringBreak);
         }
         ViewGroup host = hostFor(surface);
         if (host == null) {
             hideNow();
             DebugLog.log("Label not shown (" + text + "): no window to show it in");
-            // The video is on screen but the label cannot be added next to it: the block is invisible.
-            problems.report(Problem.LABEL_FAILED, "no window to show the label in, video in "
-                    + surface.getRootView().getClass().getSimpleName());
-            return;
+            return fallbackToast(text, duringBreak);
         }
 
         if (label == null || label.getParent() != host || video.get() != surface) {
@@ -154,12 +169,46 @@ final class AdBreakIndicator {
             DebugLog.log("Label shown: " + text + " in " + host.getClass().getSimpleName()
                     + " over " + surface.getClass().getSimpleName() + " " + describe(surface));
         }
+        // The label and a toast are never on screen together: the label takes over.
+        dismissToast();
         if (!text.contentEquals(label.getText())) label.setText(text);
         place(host, label, surface);
         // bringToFront relayouts the whole window, so only when something else covers the label.
         if (host.getChildAt(host.getChildCount() - 1) != label) label.bringToFront();
         main.removeCallbacks(hideRunnable);
         main.postDelayed(hideRunnable, visibleMs);
+        return true;
+    }
+
+    /**
+     * Shows the block as a toast when the label cannot be placed over the video. Only while one of
+     * Twitch's screens is in front: with the app in the background (audio playing on) or a screen
+     * being left, a toast would land over other apps or the main page. One per break (see ToastThrottle).
+     */
+    private boolean fallbackToast(String text, boolean duringBreak) {
+        if (resumedActivity.get() == null) {
+            DebugLog.log("No message for \"" + text + "\": Twitch is not in front");
+            return false;
+        }
+        // Already told during this break.
+        if (!toasts.allow(duringBreak)) return true;
+        Application app = currentApplication();
+        if (app == null) {
+            problems.report(Problem.LABEL_FAILED, "no screen to show \"" + text + "\" on");
+            return false;
+        }
+        // Only called after hideNow(): no label is on screen while the toast shows.
+        dismissToast();
+        toast = Toast.makeText(app, text, Toast.LENGTH_SHORT);
+        toast.show();
+        DebugLog.log("Shown as a message instead: " + text);
+        return true;
+    }
+
+    private void dismissToast() {
+        if (toast == null) return;
+        toast.cancel();
+        toast = null;
     }
 
     private void replace() {

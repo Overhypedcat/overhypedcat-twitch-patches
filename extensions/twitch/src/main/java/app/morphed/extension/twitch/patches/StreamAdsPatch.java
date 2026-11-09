@@ -5,6 +5,8 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 
+import java.lang.reflect.Method;
+
 import app.morphed.extension.twitch.adblock.AccessTokenClient;
 import app.morphed.extension.twitch.adblock.AdBlocker;
 import app.morphed.extension.twitch.adblock.BackupStreamFinder;
@@ -51,6 +53,8 @@ public final class StreamAdsPatch {
     private static final long AD_BLOCKED_DEBOUNCE_MS = 30_000;
     private static volatile long lastAdBlockedShownAt;
     private static volatile boolean adBlockedPending;
+    /** The pending check is for an ad the app was about to play itself (main thread only). */
+    private static boolean pendingPlaybackAd;
 
     private StreamAdsPatch() {
     }
@@ -74,14 +78,23 @@ public final class StreamAdsPatch {
     }
 
     /**
-     * An ad the app wanted to show was stopped before it started (refused request, ineligible check).
-     * Shown only while a stream is watched (it polls playlists and plays with sound); on the main page
-     * the same requests are for banner and feed ads, which stay blocked without a message.
+     * A request to an ad server was refused. Shown only while a live stream is watched (it polls
+     * playlists and plays with sound); on the main page the same requests are for banner and feed
+     * ads, which stay blocked without a message.
      */
     static void adBlocked() {
         // Called from network threads (refused requests) and the app's own threads; the players are
         // asked for their state on the main thread, where the app uses them.
-        MAIN.post(() -> onMain(StreamAdsPatch::adBlockedOnMain));
+        MAIN.post(() -> onMain(() -> adBlockedOnMain(false)));
+    }
+
+    /**
+     * An ad the app was about to play itself (a pre-roll before a stream or a past broadcast) was
+     * stopped. That only happens when something is opened to watch, so it is shown over any player
+     * that plays with sound, live or not; muted feed previews do not count.
+     */
+    static void playbackAdBlocked() {
+        MAIN.post(() -> onMain(() -> adBlockedOnMain(true)));
     }
 
     /** Main thread work must never crash Twitch: a failure becomes an error message. */
@@ -94,34 +107,53 @@ public final class StreamAdsPatch {
         }
     }
 
-    private static void adBlockedOnMain() {
-        if (watching()) {
+    private static void adBlockedOnMain(boolean playbackAd) {
+        if (watching(playbackAd)) {
             showAdBlocked();
             return;
         }
-        // A client-side ad is checked as the stream opens, before its first playlist: check again
-        // once the player had time to start. Still no stream means nothing to show it on.
-        if (adBlockedPending) return;
+        // A client-side ad is checked as the stream opens, before its player plays: check again once
+        // it had time to start. Still nothing playing means nothing to show it on.
+        if (adBlockedPending) {
+            pendingPlaybackAd |= playbackAd;
+            return;
+        }
         adBlockedPending = true;
-        MAIN.postDelayed(() -> onMain(() -> {
-            adBlockedPending = false;
-            if (watching()) {
-                showAdBlocked();
-            } else {
-                LOGGER.log("Ad blocked outside a stream (no label)");
-            }
-        }), STREAM_START_MS);
+        pendingPlaybackAd = playbackAd;
+        MAIN.postDelayed(() -> onMain(() -> recheckAdBlocked(1)), STREAM_START_MS);
     }
 
-    private static boolean watching() {
-        return AD_BLOCKER.isWatching() && PlayerRefresher.watchedPlayer() != null;
+    /**
+     * A refused ad server request gets one recheck. An ad the app was about to play itself means
+     * something was opened to watch, so it waits for a slow player a while longer.
+     */
+    private static void recheckAdBlocked(int attempt) {
+        if (watching(pendingPlaybackAd)) {
+            adBlockedPending = false;
+            showAdBlocked();
+        } else if (pendingPlaybackAd && attempt < PLAYBACK_RECHECKS) {
+            MAIN.postDelayed(() -> onMain(() -> recheckAdBlocked(attempt + 1)), PLAYBACK_RECHECK_MS);
+        } else {
+            adBlockedPending = false;
+            LOGGER.log("Ad blocked outside a stream (no label)");
+        }
+    }
+
+    /** Rechecks for a player after a blocked pre-roll: 4 s, then every 2 s, so up to 12 s in all. */
+    private static final int PLAYBACK_RECHECKS = 5;
+    private static final long PLAYBACK_RECHECK_MS = 2_000;
+
+    /** Whether there is something on screen to show a block over; see adBlocked and playbackAdBlocked. */
+    private static boolean watching(boolean anyPlayback) {
+        if (PlayerRefresher.watchedPlayer() == null) return false;
+        return anyPlayback || AD_BLOCKER.isWatching();
     }
 
     private static void showAdBlocked() {
-        long now = System.currentTimeMillis();
-        if (now - lastAdBlockedShownAt < AD_BLOCKED_DEBOUNCE_MS) return;
-        lastAdBlockedShownAt = now;
-        INDICATOR.flash("Ad blocked");
+        if (System.currentTimeMillis() - lastAdBlockedShownAt < AD_BLOCKED_DEBOUNCE_MS) return;
+        // The quiet time only starts once the user saw it: a block that could not be shown leaves
+        // the next one free to show.
+        INDICATOR.flash("Ad blocked", () -> lastAdBlockedShownAt = System.currentTimeMillis());
     }
 
     public static boolean shouldInspect(String url) {
@@ -156,16 +188,28 @@ public final class StreamAdsPatch {
      * only a developer with adb can. Read at most every few seconds, so polls pay a time check only.
      */
     private static int fakeAdSegments() {
+        if (fakeAdUnavailable) return 0;
         long now = SystemClock.elapsedRealtime();
         if (now - fakeAdCheckedAt < FAKE_AD_CHECK_MS) return fakeAd;
         fakeAdCheckedAt = now;
         try {
-            Object value = Class.forName("android.os.SystemProperties")
-                    .getMethod("get", String.class, String.class).invoke(null, "debug.twitchmorphed.fake_ad", "0");
-            int segments = Integer.parseInt(String.valueOf(value).trim());
+            Method get = systemPropertyGet;
+            if (get == null) {
+                get = Class.forName("android.os.SystemProperties").getMethod("get", String.class, String.class);
+                systemPropertyGet = get;
+            }
+            String value = String.valueOf(get.invoke(null, "debug.twitchmorphed.fake_ad", "0")).trim();
+            int segments;
+            try {
+                segments = Integer.parseInt(value);
+            } catch (NumberFormatException notANumber) {
+                segments = 0;
+            }
             if (segments != fakeAd) LOGGER.log("Test ad " + (segments > 0 ? "on (" + segments + " segments)" : "off"));
             fakeAd = segments;
         } catch (Throwable t) {
+            // Android does not let it be read here: the test switch is off for good, no retries.
+            fakeAdUnavailable = true;
             fakeAd = 0;
         }
         return fakeAd;
@@ -174,6 +218,8 @@ public final class StreamAdsPatch {
     private static final long FAKE_AD_CHECK_MS = 3_000;
     private static volatile long fakeAdCheckedAt = Long.MIN_VALUE / 2;
     private static volatile int fakeAd;
+    private static volatile Method systemPropertyGet;
+    private static volatile boolean fakeAdUnavailable;
 
     private static AdBlocker createAdBlocker() {
         DebugLog.resumeIfEnabled();
