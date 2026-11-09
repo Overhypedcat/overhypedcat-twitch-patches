@@ -136,6 +136,12 @@ final class AdBreakIndicator {
         // During a break this runs on every poll: while the label still sits over a visible video,
         // only its text and timeout change, without searching every window for the video again.
         View current = video.get();
+        if (current != null && inPictureInPicture(current)) {
+            // The stream moved into a small player: no label there (see inPictureInPicture).
+            hideNow();
+            DebugLog.log("Label not shown (" + text + "): picture in picture");
+            return false;
+        }
         if (label != null && label.isAttachedToWindow() && current != null && current.isShown()
                 && visibleArea(current) > 0 && label.getParent() instanceof ViewGroup
                 && label.getRootView() == current.getRootView()) {
@@ -156,6 +162,11 @@ final class AdBreakIndicator {
             // player that is not visible): the user is looking for a stream, so nothing is shown.
             hideNow();
             DebugLog.log("Label not shown (" + text + "): only feed previews on screen");
+            return false;
+        }
+        if (surface != null && inPictureInPicture(surface)) {
+            hideNow();
+            DebugLog.log("Label not shown (" + text + "): picture in picture");
             return false;
         }
         if (surface == null) {
@@ -299,6 +310,36 @@ final class AdBreakIndicator {
             }
         }
         return best;
+    }
+
+    /**
+     * Whether {@code video} plays in a small player: Android's picture in picture window over other
+     * apps, or Twitch's own mini player in a corner of the app. The user asked for no label there
+     * (and no message instead); it comes back when the stream is opened again during the break.
+     */
+    private static boolean inPictureInPicture(View video) {
+        Activity activity = activityOf(video.getContext());
+        if (activity != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && activity.isInPictureInPictureMode()) {
+            return true;
+        }
+        View root = video.getRootView();
+        if (root == null) return false;
+        Rect visible = new Rect();
+        if (!video.getGlobalVisibleRect(visible)) return false;
+        return isMiniPlayer(visible.left, visible.width(), root.getWidth());
+    }
+
+    /**
+     * Twitch's mini player sits in a corner, under half the screen wide, and grows or shrinks there
+     * when it comes back from picture in picture. The stream and past broadcast screens show the
+     * video across the whole width, or centred in full screen when the video is narrower than the screen.
+     */
+    static boolean isMiniPlayer(int left, int width, int windowWidth) {
+        if (width <= 0 || windowWidth <= 0) return false;
+        if (width * 2 < windowWidth) return true;
+        boolean fullWidth = width * 100 >= windowWidth * 95;
+        int offCentre = Math.abs(2 * left + width - windowWidth);
+        return !fullWidth && offCentre * 10 > windowWidth;
     }
 
     /**
