@@ -1,0 +1,249 @@
+package app.morphed.extension.twitch.ui;
+
+import android.annotation.SuppressLint;
+import android.app.Activity;
+import android.content.Context;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.Typeface;
+import android.os.Build;
+import android.text.TextUtils;
+import android.util.DisplayMetrics;
+import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+
+import java.lang.ref.WeakReference;
+
+import app.morphed.extension.twitch.App;
+import app.morphed.extension.twitch.patches.DebugLog;
+
+/**
+ * Debug mode's live log: a medium window over the app (not full screen, so the stream stays in view), moved by
+ * dragging its top bar, folded to that bar with one button and closed (Debug mode off) with the other.
+ */
+public final class LogWindow {
+    private static final int MAX_LINES = 400;
+    private static WeakReference<View> shown = new WeakReference<>(null);
+    private static float savedX = Float.NaN, savedY = Float.NaN;
+    private static boolean folded;
+    /** Lines waiting to be shown: added in one go a few times a second, not a layout per line. */
+    private static final StringBuilder WAITING = new StringBuilder();
+    private static boolean flushQueued;
+    private static final DebugLog.LineListener LISTENER = raw -> {
+        String line = Readable.of(raw);
+        if (line == null) return; // routine and fine: in the file only
+        synchronized (WAITING) {
+            WAITING.append(WAITING.length() == 0 ? "" : "\n").append(line);
+            if (flushQueued) return;
+            flushQueued = true;
+        }
+        App.MAIN.postDelayed(LogWindow::flushWaiting, 250);
+    };
+
+    private static void flushWaiting() {
+        String lines;
+        synchronized (WAITING) {
+            lines = WAITING.toString();
+            WAITING.setLength(0);
+            flushQueued = false;
+        }
+        if (!lines.isEmpty()) append(lines);
+    }
+    private static TextView text;
+    private static ScrollView scroll;
+
+    private LogWindow() {
+    }
+
+    /** Shows the window on this screen (once Debug mode is on). */
+    public static void show(Activity activity) {
+        if (activity == null || activity.isFinishing()) return;
+        if (Build.VERSION.SDK_INT >= 24 && activity.isInPictureInPictureMode()) return; // too small to read
+        View current = shown.get();
+        ViewGroup root = (ViewGroup) activity.getWindow().getDecorView();
+        if (current != null && current.getParent() == root) return;
+        hide();
+        View window = build(activity);
+        root.addView(window);
+        shown = new WeakReference<>(window);
+        DebugLog.removeListener(LISTENER);
+        DebugLog.addListener(LISTENER);
+    }
+
+    public static void hide() {
+        View current = shown.get();
+        if (current != null && current.getParent() instanceof ViewGroup) ((ViewGroup) current.getParent()).removeView(current);
+        shown = new WeakReference<>(null);
+        DebugLog.removeListener(LISTENER);
+        text = null;
+        scroll = null;
+    }
+
+    private static void append(String line) {
+        TextView view = text;
+        if (view == null) return;
+        boolean atEnd = scroll == null || scroll.getChildAt(0) == null
+                || scroll.getScrollY() + scroll.getHeight() >= scroll.getChildAt(0).getHeight() - 24;
+        view.append(view.length() == 0 ? line : "\n" + line);
+        if (view.getLineCount() > MAX_LINES + 50) { // keep it light: the file has everything
+            CharSequence all = view.getText();
+            int cut = 0;
+            for (int i = 0; i < 50 && cut >= 0; i++) cut = TextUtils.indexOf(all, '\n', cut + 1);
+            if (cut > 0) view.setText(all.subSequence(cut + 1, all.length()));
+        }
+        if (atEnd && scroll != null) scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private static View build(Activity activity) {
+        Context context = activity;
+        Theme theme = new Theme(context);
+        DisplayMetrics metrics = context.getResources().getDisplayMetrics();
+        int width = Math.min(metrics.widthPixels - theme.dp(24), Math.max(theme.dp(300), (int) (metrics.widthPixels * 0.66f)));
+        int height = Math.max(theme.dp(200), (int) (metrics.heightPixels * 0.32f));
+
+        LinearLayout panel = new LinearLayout(context);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackground(new Squircle(0xEB141417, theme.dpf(16)).border(0x33FFFFFF, theme.dpf(1)));
+        panel.setClipToOutline(true);
+        panel.setElevation(theme.dpf(12));
+
+        LinearLayout bar = new LinearLayout(context);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(theme.dp(14), theme.dp(4), theme.dp(4), theme.dp(4));
+        TextView title = new TextView(context);
+        title.setText("Debug mode");
+        title.setTextColor(0xFFEFEFF1);
+        title.setTextSize(13);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        bar.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        IconButton fold = new IconButton(context, theme, IconButton.FOLD);
+        IconButton close = new IconButton(context, theme, IconButton.CLOSE);
+        fold.setContentDescription("Fold the log");
+        close.setContentDescription("Turn Debug mode off");
+        bar.addView(fold);
+        bar.addView(close);
+        panel.addView(bar);
+
+        ScrollView scrollView = new ScrollView(context);
+        TextView lines = new TextView(context);
+        lines.setTextSize(12);
+        lines.setLineSpacing(0, 1.15f);
+        lines.setTextColor(0xFFDADADF);
+        lines.setTextIsSelectable(false); // selectable text re-measures everything on each change
+        lines.setPadding(theme.dp(12), 0, theme.dp(12), theme.dp(10));
+        StringBuilder start = new StringBuilder();
+        for (String raw : DebugLog.recent()) {
+            String line = Readable.of(raw);
+            if (line != null) start.append(start.length() == 0 ? "" : "\n").append(line);
+        }
+        lines.setText(start);
+        scrollView.addView(lines);
+        panel.addView(scrollView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        scrollView.setVisibility(folded ? View.GONE : View.VISIBLE);
+        scrollView.post(() -> scrollView.fullScroll(View.FOCUS_DOWN));
+        text = lines;
+        scroll = scrollView;
+
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(width, folded ? ViewGroup.LayoutParams.WRAP_CONTENT : height);
+        panel.setLayoutParams(params);
+        float x = Float.isNaN(savedX) ? metrics.widthPixels - width - theme.dp(12) : savedX;
+        float y = Float.isNaN(savedY) ? metrics.heightPixels - height - theme.dp(96) : savedY;
+        panel.setX(x);
+        panel.setY(y);
+
+        fold.setOnClickListener(v -> {
+            folded = !folded;
+            scrollView.setVisibility(folded ? View.GONE : View.VISIBLE);
+            ViewGroup.LayoutParams lp = panel.getLayoutParams();
+            lp.height = folded ? ViewGroup.LayoutParams.WRAP_CONTENT : height;
+            panel.setLayoutParams(lp);
+            fold.setShape(folded ? IconButton.UNFOLD : IconButton.FOLD);
+        });
+        fold.setShape(folded ? IconButton.UNFOLD : IconButton.FOLD);
+        close.setOnClickListener(v -> DebugMode.set(activity, false));
+
+        float[] grab = new float[2];
+        bar.setOnTouchListener((v, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    grab[0] = event.getRawX() - panel.getX();
+                    grab[1] = event.getRawY() - panel.getY();
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    View parent = (View) panel.getParent();
+                    float maxX = parent == null ? metrics.widthPixels : parent.getWidth() - panel.getWidth();
+                    float maxY = parent == null ? metrics.heightPixels : parent.getHeight() - panel.getHeight();
+                    savedX = Math.max(0, Math.min(event.getRawX() - grab[0], maxX));
+                    savedY = Math.max(0, Math.min(event.getRawY() - grab[1], maxY));
+                    panel.setX(savedX);
+                    panel.setY(savedY);
+                    return true;
+                default:
+                    return true;
+            }
+        });
+        return panel;
+    }
+
+    /** A small round button with a drawn icon (no image assets): fold, unfold or close. */
+    static final class IconButton extends View {
+        static final int FOLD = 0, UNFOLD = 1, CLOSE = 2;
+        private final Theme theme;
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint pressed = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private int shape;
+
+        IconButton(Context context, Theme theme, int shape) {
+            super(context);
+            this.theme = theme;
+            this.shape = shape;
+            paint.setColor(0xFFEFEFF1);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(theme.dpf(1.8f));
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            paint.setStrokeJoin(Paint.Join.ROUND);
+            pressed.setColor(0x26FFFFFF);
+            setClickable(true);
+            setFocusable(true);
+        }
+
+        void setShape(int value) {
+            shape = value;
+            invalidate();
+        }
+
+        @Override
+        protected void onMeasure(int w, int h) {
+            setMeasuredDimension(theme.dp(40), theme.dp(40));
+        }
+
+        @Override
+        protected void drawableStateChanged() {
+            super.drawableStateChanged();
+            invalidate();
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            float cx = getWidth() / 2f, cy = getHeight() / 2f, r = theme.dpf(6);
+            if (isPressed()) canvas.drawCircle(cx, cy, theme.dpf(16), pressed);
+            if (shape == CLOSE) {
+                canvas.drawLine(cx - r, cy - r, cx + r, cy + r, paint);
+                canvas.drawLine(cx - r, cy + r, cx + r, cy - r, paint);
+            } else {
+                float dir = shape == FOLD ? -1 : 1; // chevron up folds, down unfolds
+                float tip = cy + dir * r * 0.55f, base = cy - dir * r * 0.55f;
+                canvas.drawLine(cx - r, base, cx, tip, paint);
+                canvas.drawLine(cx, tip, cx + r, base, paint);
+            }
+        }
+    }
+}

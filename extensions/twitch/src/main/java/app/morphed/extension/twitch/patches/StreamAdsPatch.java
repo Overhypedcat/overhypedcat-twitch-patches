@@ -72,6 +72,15 @@ public final class StreamAdsPatch {
         PROBLEMS.report(Problem.PROCESSING_FAILED, "setup: " + t);
     }
 
+    /** Whether a usher playlist is a preview's (feed thumbnails that play): not the stream being watched. */
+    public static boolean isPreview(String usherUrl) {
+        try {
+            return AdBlocker.isPreview(usherUrl);
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     /** Called as the first player HTTP client is made, so the label is ready before the first ad. */
     public static void prepare() {
         INDICATOR.prepare();
@@ -157,6 +166,8 @@ public final class StreamAdsPatch {
     }
 
     public static boolean shouldInspect(String url) {
+        if (!app.morphed.extension.twitch.Included.adBlock()
+                || !app.morphed.extension.twitch.settings.PatchSettings.adBlock()) return false; // left out, or switched off
         try {
             if (AD_BLOCKER.shouldInspect(url)) return true;
             AD_BLOCKER.checkRequest(url);

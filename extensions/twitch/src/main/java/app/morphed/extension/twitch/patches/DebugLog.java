@@ -35,7 +35,7 @@ import java.util.concurrent.TimeUnit;
 import app.morphed.extension.twitch.adblock.RequestStats;
 
 /**
- * Detailed log written to a text file in Downloads while the "Detailed log" setting is on.
+ * Debug mode's log: written to a text file in Downloads and shown live in the log window while it is on.
  * Nothing is collected while it is off.
  */
 public final class DebugLog {
@@ -68,8 +68,33 @@ public final class DebugLog {
     private DebugLog() {
     }
 
+    /** Gets each line as it's written (the live log window). */
+    public interface LineListener {
+        void line(String line);
+    }
+
+    private static final int KEEP_LINES = 400;
+    private static final java.util.ArrayDeque<String> RECENT = new java.util.ArrayDeque<>();
+    private static final java.util.concurrent.CopyOnWriteArrayList<LineListener> LISTENERS =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+
     public static boolean isOn() {
         return writer != null;
+    }
+
+    /** The latest lines, oldest first. */
+    public static java.util.List<String> recent() {
+        synchronized (RECENT) {
+            return new java.util.ArrayList<>(RECENT);
+        }
+    }
+
+    public static void addListener(LineListener listener) {
+        LISTENERS.add(listener);
+    }
+
+    public static void removeListener(LineListener listener) {
+        LISTENERS.remove(listener);
     }
 
     /** Resumes logging after an app restart if the setting was left on. */
@@ -80,12 +105,12 @@ public final class DebugLog {
         if (context != null && preferences(context).getBoolean(KEY_ENABLED, false)) start(context);
     }
 
-    static boolean isEnabled(Context context) {
+    public static boolean isEnabled(Context context) {
         return preferences(context).getBoolean(KEY_ENABLED, false);
     }
 
     /** Returns the log file name when turned on, or the name of the finished file when turned off. */
-    static synchronized String setEnabled(Context context, boolean enabled) {
+    public static synchronized String setEnabled(Context context, boolean enabled) {
         checkedOnStart = true;
         preferences(context).edit().putBoolean(KEY_ENABLED, enabled).apply();
         String name = fileName;
@@ -103,6 +128,12 @@ public final class DebugLog {
         if (target == null) return;
         String line = timestamp() + " [" + Thread.currentThread().getName() + "] " + message + "\n";
         IO.execute(() -> write(target, line));
+        String shown = timestamp() + " " + message;
+        synchronized (RECENT) {
+            RECENT.addLast(shown);
+            while (RECENT.size() > KEEP_LINES) RECENT.removeFirst();
+        }
+        for (LineListener listener : LISTENERS) listener.line(shown);
     }
 
     private static void write(Writer target, String line) {
@@ -115,7 +146,7 @@ public final class DebugLog {
                 HEARTBEAT.schedule(() -> flush(target), 1, TimeUnit.SECONDS);
             }
         } catch (IOException e) {
-            failed(target, "Writing the detailed log failed", e);
+            failed(target, "Writing the debug log failed", e);
         }
     }
 
@@ -128,7 +159,7 @@ public final class DebugLog {
             try {
                 target.flush();
             } catch (IOException e) {
-                failed(target, "Writing the detailed log failed", e);
+                failed(target, "Writing the debug log failed", e);
             }
         });
     }
@@ -167,7 +198,7 @@ public final class DebugLog {
         } catch (IOException | RuntimeException e) {
             Log.e(TAG, "Could not create the log file", e);
             preferences(context).edit().putBoolean(KEY_ENABLED, false).apply();
-            tell("Detailed log could not be created in Downloads: " + e.getMessage());
+            tell("The debug log could not be created in Downloads: " + e.getMessage());
             return;
         }
         log("Log started. Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + "), "
@@ -195,7 +226,7 @@ public final class DebugLog {
             } catch (IOException e) {
                 // The last lines may be missing from the file.
                 Log.e(TAG, "Closing the log failed", e);
-                if (tellFailure) tell("Saving the detailed log failed: " + e.getMessage());
+                if (tellFailure) tell("Saving the debug log failed: " + e.getMessage());
             }
         });
     }

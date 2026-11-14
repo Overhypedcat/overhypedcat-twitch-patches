@@ -1,0 +1,292 @@
+package app.morphed.extension.twitch.settings;
+
+import android.app.Activity;
+import android.content.Context;
+import android.graphics.Typeface;
+import android.text.TextUtils;
+import android.util.Log;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import java.lang.ref.WeakReference;
+
+import app.morphed.extension.twitch.App;
+import app.morphed.extension.twitch.Included;
+import app.morphed.extension.twitch.musicfilter.SongRemoval;
+import app.morphed.extension.twitch.patches.DebugLog;
+import app.morphed.extension.twitch.ui.Squircle;
+import app.morphed.extension.twitch.ui.Theme;
+import app.morphed.extension.twitch.ui.Toggle;
+import app.morphed.extension.twitch.unlock.QualityUnlock;
+
+/**
+ * The patches' switches in the video player's Options sheet (ad blocker, song removal, quality unlock), with what
+ * each is doing right now. The sheet is React Native: its own rows are found by their test ids, and the section
+ * is appended to the end of its scrolling list, which is lengthened to hold it.
+ */
+public final class PlayerOptionsSection {
+    /** Rows of the Options sheet, any of which says it's open. */
+    private static final String[] SHEET_ROWS = {"playback-audio-only", "playback-video-stats", "playback-ad-stats"};
+    private static final Object SECTION_TAG = new Object();
+    private static int testIdKey;
+    private static boolean failureShown;
+    private static WeakReference<View> lastSection = new WeakReference<>(null);
+
+    private PlayerOptionsSection() {
+    }
+
+    /** Looks for an open Options sheet in this window and adds the section once. */
+    public static void scan(Activity activity, View root) {
+        if (testIdKey == 0) {
+            testIdKey = activity.getResources().getIdentifier("react_test_id", "id", activity.getPackageName());
+            if (testIdKey == 0) testIdKey = -1;
+        }
+        if (testIdKey < 0) return;
+        if (!Included.adBlock() && !Included.songRemoval() && !Included.qualityUnlock()) return;
+        View row = find(root);
+        if (row == null) return;
+        ScrollView scroll = null;
+        for (View v = row; v.getParent() instanceof View; v = (View) v.getParent()) {
+            if (v.getParent() instanceof ScrollView) {
+                scroll = (ScrollView) v.getParent();
+                break;
+            }
+        }
+        if (scroll == null || !(scroll.getChildAt(0) instanceof ViewGroup)) {
+            failed(new IllegalStateException("the Options list has no scrolling content"));
+            return;
+        }
+        ViewGroup content = (ViewGroup) scroll.getChildAt(0);
+        for (int i = 0; i < content.getChildCount(); i++) {
+            if (content.getChildAt(i).getTag() == SECTION_TAG) return; // there already
+        }
+        View section = build(activity, row);
+        section.setTag(SECTION_TAG);
+        content.addView(section);
+        lastSection = new WeakReference<>(section);
+        place(content, section);
+        content.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            @Override
+            public void onLayoutChange(View v, int l, int t, int r, int b, int ol, int ot, int or, int ob) {
+                if (section.getParent() != content) {
+                    content.removeOnLayoutChangeListener(this);
+                    return;
+                }
+                content.post(() -> place(content, section));
+            }
+        });
+        DebugLog.log("Player Options: patch switches added");
+    }
+
+    /** The first visible row of the Options sheet, in one walk through the window. */
+    private static View find(View view) {
+        if (view.getVisibility() != View.VISIBLE) return null;
+        Object tag = view.getTag(testIdKey);
+        if (tag instanceof String) for (String id : SHEET_ROWS) if (id.equals(tag)) return view;
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                View found = find(group.getChildAt(i));
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * React Native lays out its own rows and leaves ours alone: ours goes below the lowest of them, and the list
+     * is made that much longer so it scrolls to it.
+     */
+    private static void place(ViewGroup content, View section) {
+        int bottom = 0;
+        for (int i = 0; i < content.getChildCount(); i++) {
+            View child = content.getChildAt(i);
+            if (child != section && child.getVisibility() != View.GONE) bottom = Math.max(bottom, child.getBottom());
+        }
+        int width = content.getWidth();
+        if (width <= 0) return;
+        section.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        int height = section.getMeasuredHeight();
+        section.layout(0, bottom, width, bottom + height);
+        int wanted = content.getTop() + bottom + height;
+        if (content.getBottom() != wanted) content.setBottom(wanted);
+    }
+
+    public static void failed(Throwable t) {
+        Log.e(App.TAG, "Adding the patch switches to the player's Options failed", t);
+        DebugLog.log("PROBLEM Player Options: " + t);
+        if (failureShown) return;
+        failureShown = true;
+        Context context = App.application();
+        if (context != null) {
+            Toast.makeText(context, "The patch switches couldn't be added to the player's Options (Twitch changed it): " + t,
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    // --- the section
+
+    private static View build(Activity activity, View sheetRow) {
+        Theme theme = new Theme(activity);
+        LinearLayout section = new LinearLayout(activity);
+        section.setOrientation(LinearLayout.VERTICAL);
+        int side = Math.max(theme.dp(16), leftEdge(sheetRow)); // where the sheet's own rows start
+        section.setPadding(0, theme.dp(12), 0, theme.dp(24));
+
+        TextView header = new TextView(activity);
+        header.setText("PATCHES");
+        header.setTextColor(theme.dark ? 0xFFDEDEE3 : 0xFF3A3A3D); // as the sheet's own section titles
+        header.setTextSize(18);
+        header.setPadding(side, theme.dp(12), side, theme.dp(10));
+        section.addView(header);
+
+        if (Included.adBlock()) section.addView(row(activity, theme, side, "Ad blocker", PatchSettings.AD_BLOCK, null));
+
+        TextView songStatus = status(activity, theme, side);
+        TextView retry = new TextView(activity);
+        retry.setText("Retry");
+        retry.setTextColor(Theme.PURPLE);
+        retry.setTextSize(13);
+        retry.setTypeface(Typeface.DEFAULT_BOLD);
+        retry.setPadding(theme.dp(12), theme.dp(6), theme.dp(12), theme.dp(6));
+        retry.setBackground(new Squircle(theme.dark ? 0x269147FF : 0x1A9147FF, theme.dpf(10)));
+        retry.setOnClickListener(v -> SongRemoval.retry());
+        LinearLayout retryLine = new LinearLayout(activity);
+        retryLine.setPadding(side, 0, side, theme.dp(4));
+        retryLine.addView(retry);
+        if (Included.songRemoval()) {
+            section.addView(row(activity, theme, side, "Song removal", PatchSettings.SONG_REMOVAL, songStatus));
+            section.addView(retryLine);
+        }
+
+        TextView unlockStatus = status(activity, theme, side);
+        if (Included.qualityUnlock()) {
+            section.addView(row(activity, theme, side, "Quality unlock", PatchSettings.QUALITY_UNLOCK, unlockStatus));
+        }
+
+        Runnable showSong = () -> {
+            boolean on = PatchSettings.songRemoval();
+            SongRemoval.Status s = SongRemoval.status();
+            String text = !on ? null : s.problem != null ? s.problem
+                    : s.readyIn > 0 && !s.filtering ? s.step + " (Shazam again in " + s.readyIn + " s)" : s.step;
+            show(songStatus, text, on && s.problem != null, theme);
+            retryLine.setVisibility(on && Included.songRemoval() ? View.VISIBLE : View.GONE);
+            relayout(section);
+        };
+        Runnable showUnlock = () -> {
+            boolean on = PatchSettings.qualityUnlock();
+            QualityUnlock.Status s = QualityUnlock.status();
+            String text = !on ? null : "Off".equals(s.text) || "On".equals(s.text)
+                    ? (QualityUnlock.servers().names().isEmpty() ? "Add a VPN server in Settings, Patch settings" : null)
+                    : s.text;
+            show(unlockStatus, text, on && s.problem, theme);
+            relayout(section);
+        };
+        showSong.run();
+        showUnlock.run();
+        SongRemoval.StatusListener songListener = s -> showSong.run();
+        QualityUnlock.StatusListener unlockListener = s -> showUnlock.run();
+        PatchSettings.Listener settingsListener = (key, on) -> App.onMain(() -> {
+            showSong.run();
+            showUnlock.run();
+        });
+        section.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            @Override
+            public void onViewAttachedToWindow(View v) {
+                SongRemoval.addListener(songListener);
+                QualityUnlock.addListener(unlockListener);
+                PatchSettings.addListener(settingsListener);
+            }
+
+            @Override
+            public void onViewDetachedFromWindow(View v) {
+                SongRemoval.removeListener(songListener);
+                QualityUnlock.removeListener(unlockListener);
+                PatchSettings.removeListener(settingsListener);
+            }
+        });
+        return section;
+    }
+
+    /** Where a sheet row's content starts, from the left of the scrolling list. */
+    private static int leftEdge(View row) {
+        int left = row.getPaddingLeft();
+        for (View v = row; v != null && !(v.getParent() instanceof ScrollView); v = (View) v.getParent()) {
+            left += v.getLeft();
+            if (!(v.getParent() instanceof View)) break;
+        }
+        // the content container's own left is 0 inside the list; the row's offset is what counts
+        return left;
+    }
+
+    /** The section's lines changed: React Native doesn't measure it again, so it's placed again here. */
+    private static void relayout(View section) {
+        section.post(() -> {
+            if (section.getParent() instanceof ViewGroup) place((ViewGroup) section.getParent(), section);
+        });
+    }
+
+    private static TextView status(Context context, Theme theme, int side) {
+        TextView status = new TextView(context);
+        status.setTextSize(13);
+        status.setMaxLines(3);
+        status.setEllipsize(TextUtils.TruncateAt.END);
+        status.setPadding(0, theme.dp(2), 0, 0);
+        return status;
+    }
+
+    private static void show(TextView view, String text, boolean problem, Theme theme) {
+        view.setVisibility(text == null || text.isEmpty() ? View.GONE : View.VISIBLE);
+        view.setText(text);
+        view.setTextColor(problem ? theme.danger : theme.secondary);
+    }
+
+    private static View row(Context context, Theme theme, int side, String title, String key, TextView status) {
+        LinearLayout row = new LinearLayout(context);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(side, theme.dp(10), side, theme.dp(10));
+        row.setMinimumHeight(theme.dp(56));
+
+        LinearLayout texts = new LinearLayout(context);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        TextView name = new TextView(context);
+        name.setText(title);
+        name.setTextColor(theme.text);
+        name.setTextSize(16);
+        name.setTypeface(Typeface.DEFAULT_BOLD);
+        texts.addView(name);
+        if (status != null) texts.addView(status);
+        row.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        Toggle toggle = new Toggle(context, theme, PatchSettings.get(key));
+        toggle.setContentDescription(title);
+        toggle.setListener(on -> {
+            PatchSettings.set(key, on);
+            DebugLog.log("Player Options: " + title + (on ? " on" : " off"));
+        });
+        row.addView(toggle);
+        row.setOnClickListener(v -> toggle.setOn(!toggle.isOn(), true));
+        PatchSettings.Listener sync = (changed, on) -> {
+            if (changed.equals(key)) App.onMain(() -> toggle.setOn(on, false));
+        };
+        row.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            @Override
+            public void onViewAttachedToWindow(View v) {
+                PatchSettings.addListener(sync);
+            }
+
+            @Override
+            public void onViewDetachedFromWindow(View v) {
+                PatchSettings.removeListener(sync);
+            }
+        });
+        return row;
+    }
+}
