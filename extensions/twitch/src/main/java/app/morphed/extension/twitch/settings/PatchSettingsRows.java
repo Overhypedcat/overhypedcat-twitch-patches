@@ -70,7 +70,7 @@ public final class PatchSettingsRows {
     }
 
     /** kotlin.Unit, what the app's own click handlers give back. */
-    private static Object unit() {
+    static Object unit() {
         if (!unitLooked) {
             unitLooked = true;
             try {

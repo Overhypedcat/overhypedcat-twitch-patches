@@ -1,13 +1,17 @@
 package app.morphed.extension.twitch.settings;
 
 import android.app.Activity;
+import android.app.Dialog;
 import android.content.Context;
 import android.content.res.ColorStateList;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.InsetDrawable;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Switch;
@@ -30,8 +34,12 @@ import app.morphed.extension.twitch.unlock.QualityUnlock;
  * is appended to the end of its scrolling list, which is lengthened to hold it.
  */
 public final class PlayerOptionsSection {
-    /** Rows of the Options sheet, any of which says it's open. */
-    private static final String[] SHEET_ROWS = {"playback-audio-only", "playback-video-stats", "playback-ad-stats"};
+    /**
+     * Rows of the Options sheet, any of which says it's open. The sheet differs by layout (portrait, full screen,
+     * vertical full screen): rows that are in each, and rows that are only in some, are all here.
+     */
+    static final String[] SHEET_ROWS = {"playback-audio-only", "playback-video-stats", "playback-ad-stats",
+            "playback-captions-settings", "playback-landscape-alerts", "playback-pip-auto-popout"};
     private static final Object SECTION_TAG = new Object();
     private static int testIdKey;
     private static boolean failureShown;
@@ -64,7 +72,8 @@ public final class PlayerOptionsSection {
         for (int i = 0; i < content.getChildCount(); i++) {
             if (content.getChildAt(i).getTag() == SECTION_TAG) return; // there already
         }
-        View section = build(activity, row);
+        // where the sheet's own rows start (its list may already be inset)
+        View section = build(activity, leftEdge(row));
         section.setTag(SECTION_TAG);
         content.addView(section);
         place(content, section);
@@ -84,8 +93,7 @@ public final class PlayerOptionsSection {
     /** The first visible row of the Options sheet, in one walk through the window. */
     private static View find(View view) {
         if (view.getVisibility() != View.VISIBLE) return null;
-        Object tag = view.getTag(testIdKey);
-        if (tag instanceof String) for (String id : SHEET_ROWS) if (id.equals(tag)) return view;
+        if (isSheetRow(view.getTag(testIdKey))) return view;
         if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;
             for (int i = 0; i < group.getChildCount(); i++) {
@@ -94,6 +102,13 @@ public final class PlayerOptionsSection {
             }
         }
         return null;
+    }
+
+    /** Whether a view's React Native test id is one of the Options sheet's rows. */
+    static boolean isSheetRow(Object testId) {
+        if (!(testId instanceof String)) return false;
+        for (String id : SHEET_ROWS) if (id.equals(testId)) return true;
+        return false;
     }
 
     /**
@@ -116,6 +131,42 @@ public final class PlayerOptionsSection {
         if (content.getBottom() != wanted) content.setBottom(wanted);
     }
 
+    /**
+     * The section as a sheet of its own, from the bottom (for the player's older Options sheet, which is drawn by
+     * Jetpack Compose and can't take it in).
+     */
+    public static void showSheet(Activity activity) {
+        Theme theme = new Theme(activity);
+        Dialog dialog = new Dialog(activity, theme.dark ? android.R.style.Theme_DeviceDefault_Dialog_NoActionBar
+                : android.R.style.Theme_DeviceDefault_Light_Dialog_NoActionBar);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout sheet = new LinearLayout(activity);
+        sheet.setOrientation(LinearLayout.VERTICAL);
+        // Rounded at the top only: the squircle's lower corners are drawn below the screen's edge.
+        int radius = theme.dp(16);
+        sheet.setBackground(new InsetDrawable(new Squircle(theme.background, radius), 0, 0, 0, -2 * radius));
+        View handle = new View(activity);
+        handle.setBackground(new Squircle(theme.dark ? 0xFF53535F : 0xFFADADB8, theme.dpf(2)));
+        LinearLayout.LayoutParams handleSize = new LinearLayout.LayoutParams(theme.dp(32), theme.dp(4));
+        handleSize.gravity = Gravity.CENTER_HORIZONTAL;
+        handleSize.topMargin = theme.dp(10);
+        sheet.addView(handle, handleSize);
+        ScrollView scroll = new ScrollView(activity);
+        scroll.addView(build(activity, theme.dp(16)));
+        sheet.addView(scroll);
+        dialog.setContentView(sheet);
+        dialog.setCanceledOnTouchOutside(true);
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(0));
+            window.setGravity(Gravity.BOTTOM);
+            window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            window.getDecorView().setPadding(0, 0, 0, 0);
+        }
+        dialog.show();
+        DebugLog.log("Player Options: patch switches opened as a sheet");
+    }
+
     public static void failed(Throwable t) {
         Log.e(App.TAG, "Adding the patch switches to the player's Options failed", t);
         DebugLog.log("PROBLEM Player Options: " + Log.getStackTraceString(t));
@@ -131,11 +182,10 @@ public final class PlayerOptionsSection {
 
     // --- the section
 
-    private static View build(Activity activity, View sheetRow) {
+    private static View build(Activity activity, int side) {
         Theme theme = new Theme(activity);
         LinearLayout section = new LinearLayout(activity);
         section.setOrientation(LinearLayout.VERTICAL);
-        int side = leftEdge(sheetRow); // where the sheet's own rows start (its list may already be inset)
         section.setPadding(0, theme.dp(12), 0, theme.dp(24));
 
         TextView header = new TextView(activity);
@@ -230,6 +280,7 @@ public final class PlayerOptionsSection {
 
     /** The section's lines changed: React Native doesn't measure it again, so it's placed again here. */
     private static void relayout(View section) {
+        if (section.getTag() != SECTION_TAG) return; // in a sheet of its own: laid out as usual
         section.post(() -> {
             if (section.getParent() instanceof ViewGroup) place((ViewGroup) section.getParent(), section);
         });

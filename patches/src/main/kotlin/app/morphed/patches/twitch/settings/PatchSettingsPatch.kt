@@ -20,6 +20,28 @@ import com.android.tools.smali.dexlib2.iface.reference.MethodReference
 private const val SCREENS_CLASS = "Lapp/morphed/extension/twitch/ui/Screens;"
 private const val ROWS_CLASS = "Lapp/morphed/extension/twitch/settings/PatchSettingsRows;"
 private const val IMPORT_ACTIVITY = "app.morphed.extension.twitch.settings.VpnImportActivity"
+private const val OPTIONS_ROW_CLASS = "Lapp/morphed/extension/twitch/settings/PlayerOptionsRow;"
+
+/** Finds the resource IDs of the older Options sheet's own texts, by name, to find its code by. */
+private val optionsSheetLabelsPatch = resourcePatch {
+    execute {
+        document("res/values/public.xml").use { values ->
+            val items = values.getElementsByTagName("public")
+            for (i in 0 until items.length) {
+                val attributes = items.item(i).attributes
+                if (attributes.getNamedItem("type")?.nodeValue != "string") continue
+                val id = attributes.getNamedItem("id")?.nodeValue ?: continue
+                when (attributes.getNamedItem("name")?.nodeValue) {
+                    "audio_only_label" -> OptionsSheetLabels.audioOnly = java.lang.Long.decode(id).toInt()
+                    "viewing_options_label" -> OptionsSheetLabels.viewingOptions = java.lang.Long.decode(id).toInt()
+                }
+            }
+        }
+        check(OptionsSheetLabels.audioOnly != 0 && OptionsSheetLabels.viewingOptions != 0) {
+            "The player Options sheet's texts (audio_only_label, viewing_options_label) aren't in the app's resources"
+        }
+    }
+}
 
 /** Declares the activity that picks a VPN server's config file. */
 private val vpnImportActivityPatch = resourcePatch {
@@ -51,7 +73,7 @@ val patchSettingsPatch = bytecodePatch(
 ) {
     compatibleWith(COMPATIBILITY_TWITCH)
 
-    dependsOn(vpnImportActivityPatch)
+    dependsOn(vpnImportActivityPatch, optionsSheetLabelsPatch)
     extendWith("extensions/twitch.mpe")
 
     execute {
@@ -134,6 +156,54 @@ val patchSettingsPatch = bytecodePatch(
                 "The settings row's click type $clickType isn't a Function0; the patch needs an update"
             }
             mutableClassDefBy(ROWS_CLASS).interfaces.add(clickType)
+        }
+
+        // The player's older Options sheet (the vertical view opens it) is Jetpack Compose: it can't take switches
+        // whose state it doesn't hold. A "Patches" row, built with its own row composable after its last viewing
+        // option, opens the switches as a sheet of their own.
+        ViewingOptionsGroupFingerprint.method.apply {
+            val lastIndex = optionsRowCalls(this).last()
+            val lastCall = getInstruction<RegisterRangeInstruction>(lastIndex)
+            val row = lastCall.getReference<MethodReference>()!!
+            val clickType = row.parameterTypes[4].toString()
+            val first = lastCall.startRegister
+            val composer = first + 7
+            check(lastCall.registerCount == 10) { "Unexpected Options row call in $definingClass->$name" }
+            // Right after the call, the composer is moved back out of the call's registers: the row goes there.
+            val restore = getInstruction(lastIndex + 1)
+            check(restore is TwoRegisterInstruction && restore.registerB == composer &&
+                restore.opcode in setOf(Opcode.MOVE_OBJECT, Opcode.MOVE_OBJECT_FROM16, Opcode.MOVE_OBJECT_16)) {
+                "The Options rows don't keep their composer as expected in $definingClass->$name; the patch needs an update"
+            }
+            val composerAfter = restore.registerA
+            checkRegistersFreeAfter(this, lastIndex + 1,
+                (first..first + 9).filter { it != composer && it != composerAfter }.toSet())
+            addInstructions(
+                lastIndex + 2,
+                """
+                    invoke-static {}, $OPTIONS_ROW_CLASS->click()Ljava/lang/Object;
+                    move-result-object v${first + 4}
+                    check-cast v${first + 4}, $clickType
+                    invoke-static {}, $OPTIONS_ROW_CLASS->title()Ljava/lang/String;
+                    move-result-object v$first
+                    const/16 v${first + 1}, 0x0
+                    const/16 v${first + 2}, 0x0
+                    const/16 v${first + 3}, 0x0
+                    const/16 v${first + 5}, 0x0
+                    const/16 v${first + 6}, 0x0
+                    const/16 v${first + 8}, 0x0
+                    const/16 v${first + 9}, 0x6e
+                    invoke-static/range { v$first .. v${first + 9} }, $row
+                    move-object/from16 v$composerAfter, v$composer
+                """
+            )
+            val clickClass = classDefByOrNull(clickType) ?: error("Click type $clickType not found")
+            val abstractMethods = clickClass.methods.filter { AccessFlags.ABSTRACT.isSet(it.accessFlags) }
+            check(abstractMethods.size == 1 && abstractMethods[0].name == "invoke" &&
+                abstractMethods[0].parameterTypes.isEmpty() && abstractMethods[0].returnType == "Ljava/lang/Object;") {
+                "The Options row's click type $clickType isn't a Function0; the patch needs an update"
+            }
+            mutableClassDefBy(OPTIONS_ROW_CLASS).interfaces.add(clickType)
         }
     }
 }

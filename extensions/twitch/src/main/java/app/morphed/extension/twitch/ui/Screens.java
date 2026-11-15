@@ -20,6 +20,8 @@ import app.morphed.extension.twitch.settings.PlayerOptionsSection;
  */
 public final class Screens implements Application.ActivityLifecycleCallbacks {
     private static final long SCAN_GAP_MS = 250;
+    /** A new window is looked for this long after the activity's lost focus to it (it's being added then). */
+    private static final long WINDOW_WAIT_MS = 300;
     private static WeakReference<Activity> resumed = new WeakReference<>(null);
     private static WeakReference<Activity> settings = new WeakReference<>(null);
     private static boolean installed;
@@ -75,29 +77,57 @@ public final class Screens implements Application.ActivityLifecycleCallbacks {
 
     private static void watch(Activity activity) {
         View decor = activity.getWindow().getDecorView();
-        Object tag = decor.getTag(TAG_KEY);
-        if (tag != null) return;
+        if (decor.getTag(TAG_KEY) != null) return;
+        watch(activity, decor);
+        // A sheet or dialog (the player's Options in full screen) opens in a window of its own, and the
+        // activity's window loses focus to it: its window is watched as well from then on.
+        decor.getViewTreeObserver().addOnWindowFocusChangeListener(focused -> {
+            if (!focused) decor.postDelayed(() -> watchWindows(activity), WINDOW_WAIT_MS);
+        });
+    }
+
+    /** The activity's other windows (sheets, dialogs) not watched yet: watched, and looked through now. */
+    private static void watchWindows(Activity activity) {
+        try {
+            for (View root : Windows.roots(activity)) {
+                if (root.getTag(TAG_KEY) != null || Windows.owner(root) != activity) continue;
+                watch(activity, root);
+                PlayerOptionsSection.scan(activity, root);
+            }
+        } catch (Throwable t) {
+            PlayerOptionsSection.failed(t);
+        }
+    }
+
+    /** Looks through a window of the activity whenever its layout changes (at most every SCAN_GAP_MS). */
+    private static void watch(Activity activity, View root) {
+        boolean main = root == activity.getWindow().getDecorView(); // (the debug window lives on that one)
         long[] last = {0};
         boolean[] queued = {false};
         ViewTreeObserver.OnGlobalLayoutListener listener = () -> {
             if (queued[0]) return;
             long wait = Math.max(0, SCAN_GAP_MS - (SystemClock.uptimeMillis() - last[0]));
             queued[0] = true;
-            decor.postDelayed(() -> {
+            root.postDelayed(() -> {
                 queued[0] = false;
                 last[0] = SystemClock.uptimeMillis();
                 // The log is too small to read in picture in picture.
-                if (android.os.Build.VERSION.SDK_INT >= 24 && activity.isInPictureInPictureMode()) LogWindow.hide();
-                else if (DebugLog.isOn() && activity == resumed.get()) LogWindow.show(activity);
+                if (!main) {
+                    // another window of the activity: only the Options sheet is looked for there
+                } else if (android.os.Build.VERSION.SDK_INT >= 24 && activity.isInPictureInPictureMode()) {
+                    LogWindow.hide();
+                } else if (DebugLog.isOn() && activity == resumed.get()) {
+                    LogWindow.show(activity);
+                }
                 try {
-                    PlayerOptionsSection.scan(activity, decor);
+                    PlayerOptionsSection.scan(activity, root);
                 } catch (Throwable t) {
                     PlayerOptionsSection.failed(t);
                 }
             }, wait);
         };
-        decor.getViewTreeObserver().addOnGlobalLayoutListener(listener);
-        decor.setTag(TAG_KEY, listener);
+        root.getViewTreeObserver().addOnGlobalLayoutListener(listener);
+        root.setTag(TAG_KEY, listener);
     }
 
     /** A key for our tag on the window's root view (any id-like constant outside the app's own ids works). */
