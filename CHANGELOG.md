@@ -1,3 +1,10 @@
+## [4.0.1](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v4.0.0...v4.0.1) (2026-11-15)
+
+### Bug Fixes
+
+* Patch switches in full screen and in the vertical view's Options ([dd1074d](https://github.com/[secure]/overhypedcat-twitch-patches/commit/dd1074da019b079ebd3b7b503889f19d200ab0ad))
+* Safer injection of the patch switches in every Options layout ([33508c0](https://github.com/[secure]/overhypedcat-twitch-patches/commit/33508c0ecafd2e13888c81b43386c5bce69a3229))
+
 ## [4.0.0](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v3.0.3...v4.0.0) (2026-11-15)
 
 ### ⚠ BREAKING CHANGES
