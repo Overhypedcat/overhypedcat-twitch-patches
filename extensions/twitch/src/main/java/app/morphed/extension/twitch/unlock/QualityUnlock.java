@@ -369,7 +369,7 @@ public final class QualityUnlock {
         serversFailedAt = 0;
         dropTunnel(name);
         // (a stream decided already keeps its line, "Unlocked 1440p" stays true)
-        if (DECIDED.isEmpty() && (!status.problem || ADD_SERVER.equals(status.text))) publish(idle());
+        if (ADD_SERVER.equals(status.text) || (DECIDED.isEmpty() && !status.problem)) publish(idle());
         Context context = App.application();
         if (context == null) return;
         SharedPreferences preferences = PatchSettings.preferences(context);

@@ -418,9 +418,9 @@ public final class SongRemoval {
             }, new AndroidDecoder());
             made.onProblem(text -> { // told once a launch: in the Options and on screen, never dropped
                 Session current = session;
-                if (current != null) current.problem(text);
-                else problem(text);
-                toast(text, true);
+                if (current != null) current.problem(text, false);
+                else problem(text, false);
+                toast(text, true); // the one toast
             });
             synchronized (SongRemoval.class) {
                 library = made;
@@ -520,12 +520,17 @@ public final class SongRemoval {
         }
 
         @Override
-        public synchronized void problem(String text) {
+        public void problem(String text) {
+            problem(text, true);
+        }
+
+        /** toast: also shown on screen (false: the caller shows it). */
+        synchronized void problem(String text, boolean toast) {
             if (text == null ? problem == null : text.equals(problem)) return;
             problem = text;
             DebugLog.log("Song removal: " + (text == null ? "fine again" : "PROBLEM " + text));
             update();
-            if (text != null && running && session == this) SongRemoval.toast(text);
+            if (toast && text != null && running && session == this) SongRemoval.toast(text);
         }
 
         @Override
@@ -557,10 +562,14 @@ public final class SongRemoval {
 
     /** A problem outside a session (format, a broken renderer): told in the Options and on screen. */
     private static void problem(String text) {
+        problem(text, true);
+    }
+
+    private static void problem(String text, boolean toast) {
         DebugLog.log("Song removal: PROBLEM " + text);
         Status now = status;
         publish(new Status(now.filtering, now.step, text, now.readyIn));
-        toast(text);
+        if (toast) toast(text);
     }
 
     /** Problems are shown on screen, the same one not again within a while. */
