@@ -68,7 +68,7 @@ public final class SongRemoval {
     static {
         PatchSettings.addListener((key, on) -> {
             if (!PatchSettings.SONG_REMOVAL.equals(key)) return;
-            if (!on) stopSession("Off");
+            if (!on) stopSession("Off"); // (switched off here, or a stream it's off for is being watched)
         });
     }
 
@@ -79,6 +79,7 @@ public final class SongRemoval {
     public static void stream(String key) {
         if (key == null || key.equals(streamKey)) return;
         streamKey = key;
+        PatchSettings.watching(key); // the switch is per channel
         DebugLog.log("Song removal: stream is " + key);
     }
 

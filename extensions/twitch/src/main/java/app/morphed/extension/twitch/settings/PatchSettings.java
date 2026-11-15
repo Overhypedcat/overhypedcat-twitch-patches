@@ -15,6 +15,8 @@ public final class PatchSettings {
     public static final String PREFERENCES = "twitch_morphed";
     public static final String AD_BLOCK = "ad_block";
     public static final String SONG_REMOVAL = "song_removal";
+    /** The streams song removal is on for (as Mor: off until switched on, per channel). */
+    static final String SONG_REMOVAL_STREAMS = "song_removal_channels";
     public static final String QUALITY_UNLOCK = "quality_unlock";
 
     public interface Listener {
@@ -23,7 +25,8 @@ public final class PatchSettings {
 
     private static volatile boolean loaded;
     private static volatile boolean adBlock = true;
-    private static volatile boolean songRemoval = false; // off until switched on (as Mor's filter)
+    private static volatile java.util.Set<String> songStreams = new java.util.HashSet<>(); // copied on change
+    private static volatile String watching; // the stream being watched: "channel:name" or "vod:id"
     private static volatile boolean qualityUnlock = false; // on once a VPN server is added
     private static final CopyOnWriteArrayList<Listener> LISTENERS = new CopyOnWriteArrayList<>();
 
@@ -38,7 +41,8 @@ public final class PatchSettings {
             if (context == null) return; // too early: defaults until the app is there
             SharedPreferences preferences = preferences(context);
             adBlock = preferences.getBoolean(AD_BLOCK, true);
-            songRemoval = preferences.getBoolean(SONG_REMOVAL, false);
+            java.util.Set<String> saved = preferences.getStringSet(SONG_REMOVAL_STREAMS, null);
+            if (saved != null) songStreams = new java.util.HashSet<>(saved);
             qualityUnlock = preferences.getBoolean(QUALITY_UNLOCK, false);
             loaded = true;
         }
@@ -53,9 +57,23 @@ public final class PatchSettings {
         return adBlock;
     }
 
+    /** Whether song removal is on for the stream being watched. */
     public static boolean songRemoval() {
+        return songRemovalFor(watching);
+    }
+
+    public static boolean songRemovalFor(String stream) {
         load();
-        return songRemoval;
+        return stream != null && songStreams.contains(stream);
+    }
+
+    /** The stream being watched changed: the song removal switch now speaks for it. */
+    public static void watching(String stream) {
+        if (stream == null || stream.equals(watching)) return;
+        boolean before = songRemoval();
+        watching = stream;
+        boolean now = songRemoval();
+        if (now != before) tell(SONG_REMOVAL, now);
     }
 
     public static boolean qualityUnlock() {
@@ -76,12 +94,27 @@ public final class PatchSettings {
         load();
         switch (key) {
             case AD_BLOCK: adBlock = on; break;
-            case SONG_REMOVAL: songRemoval = on; break;
+            case SONG_REMOVAL: {
+                String stream = watching;
+                if (stream == null) return; // no stream to switch it for
+                java.util.Set<String> next = new java.util.HashSet<>(songStreams);
+                if (on) next.add(stream);
+                else next.remove(stream);
+                songStreams = next;
+                Context context = App.application();
+                if (context != null) preferences(context).edit().putStringSet(SONG_REMOVAL_STREAMS, next).apply();
+                tell(key, on);
+                return;
+            }
             case QUALITY_UNLOCK: qualityUnlock = on; break;
             default: throw new IllegalArgumentException(key);
         }
         Context context = App.application();
         if (context != null) preferences(context).edit().putBoolean(key, on).apply();
+        tell(key, on);
+    }
+
+    private static void tell(String key, boolean on) {
         for (Listener listener : LISTENERS) {
             try {
                 listener.changed(key, on);
@@ -100,10 +133,11 @@ public final class PatchSettings {
     }
 
     /** For tests: values without an app. */
-    static void setForTest(boolean block, boolean songs, boolean unlock) {
+    static void setForTest(boolean block, boolean unlock) {
         adBlock = block;
-        songRemoval = songs;
         qualityUnlock = unlock;
+        songStreams = new java.util.HashSet<>();
+        watching = null;
         loaded = true;
     }
 }
