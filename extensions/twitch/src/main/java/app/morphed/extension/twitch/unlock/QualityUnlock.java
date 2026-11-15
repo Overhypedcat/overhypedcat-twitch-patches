@@ -314,6 +314,25 @@ public final class QualityUnlock {
         }
     }
 
+    /**
+     * The tunnel to this server, if it's the one up, is taken out of use at once (no stream can pick it up again
+     * in the meantime) and closed in the background; its streams are decided afresh.
+     */
+    private static void dropTunnel(String name) {
+        VpnTunnel closing = null;
+        synchronized (TUNNEL_LOCK) {
+            if (tunnel != null && tunnel.config.name.equals(name)) {
+                closing = tunnel;
+                tunnel = null;
+            }
+        }
+        if (closing == null) return;
+        TUNNEL_ADDRESSES.clear();
+        DECIDED.clear();
+        VpnTunnel old = closing;
+        BACKGROUND.execute(old::close);
+    }
+
     private static void closeTunnel() {
         VpnTunnel closing;
         synchronized (TUNNEL_LOCK) {
@@ -348,13 +367,9 @@ public final class QualityUnlock {
      */
     public static void serverAdded(String name) {
         serversFailedAt = 0;
-        VpnTunnel up = tunnel;
-        if (up != null && up.config.name.equals(name)) {
-            TUNNEL_ADDRESSES.clear();
-            DECIDED.clear();
-            BACKGROUND.execute(QualityUnlock::closeTunnel);
-        }
-        if (!status.problem || ADD_SERVER.equals(status.text)) publish(idle());
+        dropTunnel(name);
+        // (a stream decided already keeps its line, "Unlocked 1440p" stays true)
+        if (DECIDED.isEmpty() && (!status.problem || ADD_SERVER.equals(status.text))) publish(idle());
         Context context = App.application();
         if (context == null) return;
         SharedPreferences preferences = PatchSettings.preferences(context);
@@ -363,12 +378,7 @@ public final class QualityUnlock {
 
     /** A server was removed: its tunnel, if it's the one up, is closed. */
     public static void serverRemoved(String name) {
-        VpnTunnel current = tunnel;
-        if (current != null && current.config.name.equals(name)) {
-            TUNNEL_ADDRESSES.clear();
-            DECIDED.clear();
-            BACKGROUND.execute(QualityUnlock::closeTunnel);
-        }
+        dropTunnel(name);
         if (servers().names().isEmpty()) publish(idle()); // the last one gone: say what's missing
     }
 }

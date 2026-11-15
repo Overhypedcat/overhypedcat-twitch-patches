@@ -70,6 +70,11 @@ public final class SongRemoval {
     private static SongLibrary library;
     private static volatile Field formatField, volumeField;
     private static volatile boolean reflectionFailed, volumeMissingTold;
+    /**
+     * A problem with the player's sound that stays true (unreadable, a broken renderer, a format that can't be
+     * filtered): kept, so a later "waiting" status never hides it. Cleared when a usable renderer comes.
+     */
+    static volatile String soundProblem;
     private static String lastToast;
     private static long lastToastAt;
 
@@ -77,7 +82,7 @@ public final class SongRemoval {
         PatchSettings.addListener((key, on) -> {
             if (!PatchSettings.SONG_REMOVAL.equals(key)) return;
             if (!on) stopSession(WAITING); // (switched off here, or a stream it's off for is being watched)
-            else if (session == null) publish(new Status(false, WAITING, null, 0));
+            else if (session == null) publish(waiting());
         });
     }
 
@@ -112,7 +117,7 @@ public final class SongRemoval {
             return;
         }
         setupFailedAt = 0;
-        publish(new Status(false, WAITING, null, 0));
+        publish(waiting());
     }
 
     // --- the audio renderer
@@ -177,13 +182,15 @@ public final class SongRemoval {
             Log.e(App.TAG, "Song removal failed", t);
             if (state == null) { // the renderer itself can't be read: off for good, told once
                 reflectionFailed = true;
-                problem("Song removal can't read the player's sound (Twitch changed it): " + Messages.of(t));
+                soundProblem = "Song removal can't read the player's sound (Twitch changed it): " + Messages.of(t);
+                problem(soundProblem);
                 return buffer;
             }
             synchronized (state) {
                 state.failed = true;
             }
-            problem("Song removal broke, the sound plays unfiltered: " + Messages.of(t));
+            soundProblem = "Song removal broke, the sound plays unfiltered: " + Messages.of(t);
+            problem(soundProblem);
             try {
                 synchronized (state) {
                     return delayed(state, buffer, size);
@@ -215,9 +222,12 @@ public final class SongRemoval {
             RENDERERS.put(renderer, state);
             DebugLog.log("Song removal: audio " + state.rate + " Hz, " + state.channels + " channels"
                     + (state.usable ? "" : " (not filtered)"));
-            if (!state.usable && PatchSettings.songRemoval()) {
-                problem("Song removal works on 48 kHz mono or stereo sound only, this stream's is " + state.rate
-                        + " Hz with " + state.channels + (state.channels == 1 ? " channel" : " channels"));
+            if (state.usable) {
+                soundProblem = null; // a new player whose sound can be filtered: what was wrong is over
+            } else {
+                soundProblem = "Song removal works on 48 kHz mono or stereo sound only, this stream's is "
+                        + state.rate + " Hz with " + state.channels + (state.channels == 1 ? " channel" : " channels");
+                if (PatchSettings.songRemoval()) problem(soundProblem);
             }
             return state;
         }
@@ -406,9 +416,11 @@ public final class SongRemoval {
                     return file;
                 }
             }, new AndroidDecoder());
-            made.onProblem(text -> {
-                DebugLog.log("Song removal: PROBLEM " + text);
-                if (text.startsWith("Songs can't be kept")) toast(text);
+            made.onProblem(text -> { // told once a launch: in the Options and on screen, never dropped
+                Session current = session;
+                if (current != null) current.problem(text);
+                else problem(text);
+                toast(text, true);
             });
             synchronized (SongRemoval.class) {
                 library = made;
@@ -427,7 +439,12 @@ public final class SongRemoval {
         session = null;
         if (current != null) current.stop();
         Align.forget();
-        publish(new Status(false, step, null, 0));
+        publish(new Status(false, step, soundProblem, 0));
+    }
+
+    /** Waiting for sound to listen to, with whatever stays wrong with the player's sound. */
+    static Status waiting() {
+        return new Status(false, WAITING, soundProblem, 0);
     }
 
     /** A session that heard nothing for a while ends; the next sound starts a new one. */
@@ -548,10 +565,15 @@ public final class SongRemoval {
 
     /** Problems are shown on screen, the same one not again within a while. */
     private static void toast(String text) {
+        toast(text, false);
+    }
+
+    /** always: a message told only once, shown even right after another. */
+    private static void toast(String text, boolean always) {
         synchronized (SongRemoval.class) {
             long now = System.currentTimeMillis();
-            if (text.equals(lastToast) && now - lastToastAt < 10 * 60_000) return;
-            if (now - lastToastAt < PROBLEM_TOAST_GAP_MS && lastToast != null) return;
+            if (!always && text.equals(lastToast) && now - lastToastAt < 10 * 60_000) return;
+            if (!always && now - lastToastAt < PROBLEM_TOAST_GAP_MS && lastToast != null) return;
             lastToast = text;
             lastToastAt = now;
         }

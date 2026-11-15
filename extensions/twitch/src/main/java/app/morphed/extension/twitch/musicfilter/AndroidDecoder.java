@@ -6,6 +6,7 @@ import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.Process;
 
 import java.io.File;
 import java.nio.ByteBuffer;
@@ -47,7 +48,8 @@ public final class AndroidDecoder implements SongLibrary.Decoder {
             // The codec's callbacks rather than asking it piece by piece: a song is thousands of 20 ms pieces,
             // and with callbacks they're all in flight at once (measured: about twice as fast).
             Collector collected = new Collector(format);
-            thread = new HandlerThread("TwitchMorphed-decode");
+            // Background priority, as the rest of song removal: the stream's own playback comes first.
+            thread = new HandlerThread("TwitchMorphed-decode", Process.THREAD_PRIORITY_BACKGROUND);
             thread.start();
             codec.setCallback(new Feeder(extractor, collected), new Handler(thread.getLooper()));
             codec.configure(format, null, null, 0);
@@ -78,9 +80,20 @@ public final class AndroidDecoder implements SongLibrary.Decoder {
                 } catch (Exception ignored) {
                     // already stopped by its failure
                 }
-                codec.release();
+                try {
+                    codec.release();
+                } catch (Exception ignored) {
+                    // released with its failure
+                }
             }
-            if (thread != null) thread.quitSafely();
+            if (thread != null) {
+                thread.quitSafely();
+                try {
+                    thread.join(1000); // a callback still reading must be done before the extractor goes
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            }
             extractor.release();
         }
     }
@@ -197,7 +210,11 @@ public final class AndroidDecoder implements SongLibrary.Decoder {
 
         @Override
         public void onOutputFormatChanged(MediaCodec codec, MediaFormat format) {
-            collected.format(format);
+            try {
+                collected.format(format);
+            } catch (Throwable error) { // (a vendor codec without a key): never on the app's own thread
+                collected.finish(error);
+            }
         }
 
         @Override
