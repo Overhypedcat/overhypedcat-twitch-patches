@@ -35,6 +35,8 @@ public final class YouTubeClient {
 
     private final Web web;
     private final Sleeper sleeper;
+    /** The pre-roll wait of the last download, for the debug log's timings. */
+    volatile long lastWaitMs;
     private volatile String visitorData;
 
     public YouTubeClient(Web web) {
@@ -223,6 +225,7 @@ public final class YouTubeClient {
         Stream stream = stream(videoId);
         if (stream.length > MAX_BYTES) throw new SongProblem("the download is too big for a song's copy");
         try {
+            lastWaitMs = stream.waitMs;
             if (stream.waitMs > 0) sleeper.sleep(stream.waitMs);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();

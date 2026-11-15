@@ -398,7 +398,12 @@ public final class SongRemoval {
 
                 @Override
                 public File download(String videoId, File folder) throws SongProblem {
-                    return youtube.download(videoId, folder);
+                    long started = System.currentTimeMillis();
+                    File file = youtube.download(videoId, folder);
+                    DebugLog.log("Song removal: downloaded " + videoId + " (" + file.length() / 1024 + " KB) in "
+                            + (System.currentTimeMillis() - started) + " ms, " + youtube.lastWaitMs
+                            + " ms of it waiting out YouTube's pre-roll");
+                    return file;
                 }
             }, new AndroidDecoder());
             made.onProblem(text -> {
