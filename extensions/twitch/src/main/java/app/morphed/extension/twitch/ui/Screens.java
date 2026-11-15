@@ -90,9 +90,16 @@ public final class Screens implements Application.ActivityLifecycleCallbacks {
     private static void watchWindows(Activity activity) {
         try {
             for (View root : Windows.roots(activity)) {
-                if (root.getTag(TAG_KEY) != null || Windows.owner(root) != activity) continue;
+                Activity owner = Windows.owner(root);
+                // (a window whose context doesn't lead to an activity is looked through too: only the Options
+                // sheet's rows are looked for there)
+                if (root.getTag(TAG_KEY) != null || (owner != null && owner != activity)) continue;
                 watch(activity, root);
                 PlayerOptionsSection.scan(activity, root);
+            }
+            String problem = Windows.problem();
+            if (problem != null) {
+                throw new IllegalStateException("the player's sheets in their own window can't be read (" + problem + ")");
             }
         } catch (Throwable t) {
             PlayerOptionsSection.failed(t);
@@ -151,5 +158,6 @@ public final class Screens implements Application.ActivityLifecycleCallbacks {
 
     @Override
     public void onActivityDestroyed(Activity activity) {
+        PlayerOptionsSection.closeSheet(activity); // its window goes with the screen
     }
 }

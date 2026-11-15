@@ -18,7 +18,7 @@ import app.morphed.extension.twitch.patches.DebugLog;
 public final class Windows {
     private static Object manager;
     private static Field views;
-    private static boolean blockedTold;
+    private static volatile String problem; // why the other windows can't be read, or null
 
     private Windows() {
     }
@@ -39,12 +39,15 @@ public final class Windows {
                 if (view instanceof View && !roots.contains(view)) roots.add((View) view);
             }
         } catch (Throwable t) {
-            if (!blockedTold) {
-                blockedTold = true;
-                DebugLog.log("PROBLEM Windows: only the activity's window can be searched (" + t + ")");
-            }
+            if (problem == null) DebugLog.log("PROBLEM Windows: only the activity's window can be searched (" + t + ")");
+            problem = app.morphed.extension.twitch.Messages.of(t);
         }
         return roots;
+    }
+
+    /** Why the app's other windows can't be read (Android blocked it), or null when they can. */
+    public static String problem() {
+        return problem;
     }
 
     /** The activity a window's view belongs to (a dialog's context wraps its activity), or null. */

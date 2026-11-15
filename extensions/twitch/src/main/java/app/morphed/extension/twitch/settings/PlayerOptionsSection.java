@@ -18,6 +18,8 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.lang.ref.WeakReference;
+
 import app.morphed.extension.twitch.App;
 import app.morphed.extension.twitch.Included;
 import app.morphed.extension.twitch.Messages;
@@ -136,10 +138,14 @@ public final class PlayerOptionsSection {
      * Jetpack Compose and can't take it in).
      */
     public static void showSheet(Activity activity) {
+        Dialog open = openSheet.get();
+        if (open != null && open.isShowing()) return; // (a second tap while it opens)
+        if (activity.isFinishing() || activity.isDestroyed()) throw new IllegalStateException("the screen is closing");
         Theme theme = new Theme(activity);
         Dialog dialog = new Dialog(activity, theme.dark ? android.R.style.Theme_DeviceDefault_Dialog_NoActionBar
                 : android.R.style.Theme_DeviceDefault_Light_Dialog_NoActionBar);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setOwnerActivity(activity);
         LinearLayout sheet = new LinearLayout(activity);
         sheet.setOrientation(LinearLayout.VERTICAL);
         // Rounded at the top only: the squircle's lower corners are drawn below the screen's edge.
@@ -164,8 +170,18 @@ public final class PlayerOptionsSection {
             window.getDecorView().setPadding(0, 0, 0, 0);
         }
         dialog.show();
+        openSheet = new WeakReference<>(dialog);
         DebugLog.log("Player Options: patch switches opened as a sheet");
     }
+
+    /** The screen goes: its sheet, if open, goes with it. */
+    public static void closeSheet(Activity activity) {
+        Dialog open = openSheet.get();
+        if (open != null && open.getOwnerActivity() == activity && open.isShowing()) open.dismiss();
+        openSheet = new WeakReference<>(null);
+    }
+
+    private static WeakReference<Dialog> openSheet = new WeakReference<>(null);
 
     public static void failed(Throwable t) {
         Log.e(App.TAG, "Adding the patch switches to the player's Options failed", t);

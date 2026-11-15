@@ -14,7 +14,6 @@ import com.android.tools.smali.dexlib2.iface.instruction.NarrowLiteralInstructio
 import com.android.tools.smali.dexlib2.iface.instruction.OneRegisterInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.RegisterRangeInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.TwoRegisterInstruction
-import app.morphe.patcher.util.proxy.mutableTypes.MutableMethod
 import com.android.tools.smali.dexlib2.iface.reference.MethodReference
 
 private const val SCREENS_CLASS = "Lapp/morphed/extension/twitch/ui/Screens;"
@@ -73,7 +72,7 @@ val patchSettingsPatch = bytecodePatch(
 ) {
     compatibleWith(COMPATIBILITY_TWITCH)
 
-    dependsOn(vpnImportActivityPatch, optionsSheetLabelsPatch)
+    dependsOn(vpnImportActivityPatch)
     extendWith("extensions/twitch.mpe")
 
     execute {
@@ -107,7 +106,8 @@ val patchSettingsPatch = bytecodePatch(
                     reference.parameterTypes[1].toString() == "I"
             } ?: error("No divider after the settings rows in $definingClass->$name")
             val divider = getInstruction(dividerIndex).getReference<MethodReference>()!!
-            checkRegistersFreeAfter(this, dividerIndex, (first..first + 7).filter { it != composer }.toSet())
+            checkRegistersFree(this, dividerIndex, (first..first + 7).filter { it != composer }.toSet(), "the settings group")
+            checkNoJumpTo(this, dividerIndex + 1, "the settings group")
 
             // The rows' icons: the lock (Security & Privacy) for VPN servers, the sliders (Content Preferences)
             // for Debug mode; each row's icon is the literal loaded into its fourth argument before the call.
@@ -151,13 +151,28 @@ val patchSettingsPatch = bytecodePatch(
             // Function0 (invoke() returning an Object), which the handler implements.
             val clickClass = classDefByOrNull(clickType) ?: error("Click type $clickType not found")
             val abstractMethods = clickClass.methods.filter { AccessFlags.ABSTRACT.isSet(it.accessFlags) }
-            check(abstractMethods.size == 1 && abstractMethods[0].name == "invoke" &&
-                abstractMethods[0].parameterTypes.isEmpty() && abstractMethods[0].returnType == "Ljava/lang/Object;") {
+            check(AccessFlags.INTERFACE.isSet(clickClass.accessFlags) && abstractMethods.size == 1 &&
+                abstractMethods[0].name == "invoke" && abstractMethods[0].parameterTypes.isEmpty() &&
+                abstractMethods[0].returnType == "Ljava/lang/Object;") {
                 "The settings row's click type $clickType isn't a Function0; the patch needs an update"
             }
             mutableClassDefBy(ROWS_CLASS).interfaces.add(clickType)
         }
+    }
+}
 
+@Suppress("unused")
+val playerOptionsRowPatch = bytecodePatch(
+    name = "Patch switches in the vertical view",
+    description = "Adds a Patches row to the video player's Options in the vertical view, which opens the " +
+        "patches' switches (the vertical view's Options can't hold them itself).",
+    default = true
+) {
+    compatibleWith(COMPATIBILITY_TWITCH)
+
+    dependsOn(patchSettingsPatch, optionsSheetLabelsPatch)
+
+    execute {
         // The player's older Options sheet (the vertical view opens it) is Jetpack Compose: it can't take switches
         // whose state it doesn't hold. A "Patches" row, built with its own row composable after its last viewing
         // option, opens the switches as a sheet of their own.
@@ -176,8 +191,11 @@ val patchSettingsPatch = bytecodePatch(
                 "The Options rows don't keep their composer as expected in $definingClass->$name; the patch needs an update"
             }
             val composerAfter = restore.registerA
-            checkRegistersFreeAfter(this, lastIndex + 1,
-                (first..first + 9).filter { it != composer && it != composerAfter }.toSet())
+            // (move-result-object, check-cast and const/16 take registers up to v255)
+            check(first + 9 <= 255) { "The Options rows use registers above v255 in $definingClass->$name; the patch needs an update" }
+            checkRegistersFree(this, lastIndex + 1,
+                (first..first + 9).filter { it != composer && it != composerAfter }.toSet(), "the Patches row")
+            checkNoJumpTo(this, lastIndex + 2, "the Patches row")
             addInstructions(
                 lastIndex + 2,
                 """
@@ -199,38 +217,12 @@ val patchSettingsPatch = bytecodePatch(
             )
             val clickClass = classDefByOrNull(clickType) ?: error("Click type $clickType not found")
             val abstractMethods = clickClass.methods.filter { AccessFlags.ABSTRACT.isSet(it.accessFlags) }
-            check(abstractMethods.size == 1 && abstractMethods[0].name == "invoke" &&
-                abstractMethods[0].parameterTypes.isEmpty() && abstractMethods[0].returnType == "Ljava/lang/Object;") {
+            check(AccessFlags.INTERFACE.isSet(clickClass.accessFlags) && abstractMethods.size == 1 &&
+                abstractMethods[0].name == "invoke" && abstractMethods[0].parameterTypes.isEmpty() &&
+                abstractMethods[0].returnType == "Ljava/lang/Object;") {
                 "The Options row's click type $clickType isn't a Function0; the patch needs an update"
             }
             mutableClassDefBy(OPTIONS_ROW_CLASS).interfaces.add(clickType)
         }
-    }
-}
-
-/**
- * Fails the patch unless the given registers are written again before anything reads them, along the code that
- * follows index (up to the first jump): the injected rows overwrite them.
- */
-private fun checkRegistersFreeAfter(method: MutableMethod, index: Int, registers: Set<Int>) {
-    val instructions = method.implementation!!.instructions.toList()
-    val written = mutableSetOf<Int>()
-    for (i in index + 1 until instructions.size) {
-        val instruction = instructions[i]
-        val reads = when (instruction) {
-            is RegisterRangeInstruction -> (instruction.startRegister until instruction.startRegister + instruction.registerCount).toList()
-            is FiveRegisterInstruction -> listOf(instruction.registerC, instruction.registerD, instruction.registerE,
-                instruction.registerF, instruction.registerG).take(instruction.registerCount)
-            is TwoRegisterInstruction -> listOf(instruction.registerB) +
-                if (instruction.opcode.setsRegister()) emptyList() else listOf(instruction.registerA)
-            is OneRegisterInstruction -> if (instruction.opcode.setsRegister()) emptyList() else listOf(instruction.registerA)
-            else -> emptyList()
-        }
-        reads.firstOrNull { it in registers && it !in written }?.let {
-            error("${method.definingClass}->${method.name} still reads v$it after the settings group; the patch needs an update")
-        }
-        if (instruction is OneRegisterInstruction && instruction.opcode.setsRegister()) written += instruction.registerA
-        if (written.containsAll(registers) || instruction.opcode.name.startsWith("GOTO") ||
-            instruction.opcode.name.startsWith("IF_") || instruction.opcode.name.startsWith("RETURN")) return
     }
 }
