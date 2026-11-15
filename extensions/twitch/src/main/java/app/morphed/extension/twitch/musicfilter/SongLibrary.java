@@ -59,9 +59,16 @@ public final class SongLibrary implements Tracker.Library {
     /** Where a failure to keep something goes (the app's log, and the screen for saves); nowhere in tests. */
     private volatile Consumer<String> problems = text -> { };
     private boolean saveFailTold;
+    private String indexProblem; // the index is read before anyone listens: told once someone does
 
     void onProblem(Consumer<String> problems) {
         this.problems = problems;
+        String waiting;
+        synchronized (this) {
+            waiting = indexProblem;
+            indexProblem = null;
+        }
+        if (waiting != null) problems.accept(waiting);
     }
 
     private synchronized void readIndex() {
@@ -69,7 +76,7 @@ public final class SongLibrary implements Tracker.Library {
             if (!indexFile.isFile()) return;
             byte[] bytes = readFile(indexFile);
             Object parsed = JsonParser.parse(new String(bytes, StandardCharsets.UTF_8));
-            if (!(parsed instanceof Map)) return;
+            if (!(parsed instanceof Map)) throw new IllegalArgumentException("it isn't a list");
             for (Map.Entry<?, ?> entry : ((Map<?, ?>) parsed).entrySet()) {
                 String id = JsonParser.string(entry.getValue(), "id");
                 if (id == null) continue;
@@ -79,8 +86,8 @@ public final class SongLibrary implements Tracker.Library {
             }
         } catch (IOException | IllegalArgumentException broken) {
             index.clear(); // a broken index: songs are told again by Shazam
-            problems.accept("The list of songs found before couldn't be read (" + broken.getMessage()
-                    + "), songs are looked up afresh");
+            indexProblem = "The list of songs found before couldn't be read (" + broken.getMessage()
+                    + "), songs are looked up afresh";
         }
     }
 

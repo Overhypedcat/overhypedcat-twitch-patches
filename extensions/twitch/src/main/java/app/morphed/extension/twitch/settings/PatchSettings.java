@@ -146,7 +146,7 @@ public final class PatchSettings {
     }
 
     /** For tests: values without an app. */
-    static void setForTest(boolean block, boolean unlock) {
+    public static void setForTest(boolean block, boolean unlock) {
         adBlock = block;
         qualityUnlock = unlock;
         songStreams = new HashSet<>();

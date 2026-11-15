@@ -136,4 +136,39 @@ public class UnlockTest {
         assertTrue(servers.remove("Server 2"));
         assertEquals(Collections.singletonList("wg-NL-FREE-1"), servers.names());
     }
+
+    @Test
+    public void aPasteTakesAFreeNameAndNeverOverwrites() throws Exception {
+        VpnServers servers = new VpnServers(folder.getRoot());
+        String key = Base64.getEncoder().encodeToString(X25519.generatePrivateKey(new SecureRandom()));
+        String config = "[Interface]\nPrivateKey = " + key + "\nAddress = 10.2.0.2/32\n[Peer]\nPublicKey = " + key
+                + "\nEndpoint = 1.2.3.4:51820\n";
+        assertEquals("Server 1", servers.freeName());
+        servers.add(servers.freeName(), config);
+        servers.add(servers.freeName(), config + "# second\n");
+        assertTrue(servers.remove("Server 1"));
+        // Server 2 is kept: the next paste takes the free Server 1, not a count that lands on Server 2
+        assertEquals("Server 1", servers.freeName());
+        assertTrue(servers.text("Server 2").contains("# second"));
+        assertTrue(servers.has("Server 2"));
+        assertTrue(servers.has("Server 2.conf"));
+    }
+
+    @Test
+    public void aFileOfTheSameNameReplacesAndCanBePutBack() throws Exception {
+        VpnServers servers = new VpnServers(folder.getRoot());
+        String key = Base64.getEncoder().encodeToString(X25519.generatePrivateKey(new SecureRandom()));
+        String config = "[Interface]\nPrivateKey = " + key + "\nAddress = 10.2.0.2/32\n[Peer]\nPublicKey = " + key
+                + "\nEndpoint = 1.2.3.4:51820\n";
+        servers.add("nl.conf", config);
+        assertTrue("an import of the same name is a replacement", servers.has("/sdcard/Download/nl.conf"));
+        servers.add("nl.conf", config.replace("1.2.3.4", "5.6.7.8"));
+        assertEquals(Collections.singletonList("nl"), servers.names());
+        String kept = servers.text("nl");
+        assertTrue(kept.contains("5.6.7.8"));
+        assertTrue(servers.remove("nl"));
+        assertNull(servers.text("nl"));
+        servers.add("nl", kept); // the undo
+        assertEquals("5.6.7.8", servers.configs(new ArrayList<>()).get(0).endpointHost);
+    }
 }

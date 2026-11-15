@@ -204,4 +204,47 @@ public class SongSourcesTest {
         }
         assertTrue("worst error " + worst, worst < 80);
     }
+
+    @Test
+    public void aBrokenIndexIsToldOnceSomeoneListens() throws Exception {
+        try (FileOutputStream out = new FileOutputStream(new File(folder.getRoot(), "songs.json"))) {
+            out.write("[1, 2".getBytes(StandardCharsets.UTF_8));
+        }
+        SongLibrary library = new SongLibrary(folder.getRoot(), new FakeSource(), null);
+        List<String> told = new ArrayList<>();
+        library.onProblem(told::add);
+        assertEquals(1, told.size());
+        assertTrue(told.get(0), told.get(0).startsWith("The list of songs found before couldn't be read"));
+        library.onProblem(told::add);
+        assertEquals("told once", 1, told.size());
+    }
+
+    @Test
+    public void aSaveThatFailsIsToldOnce() throws Exception {
+        File notAFolder = folder.newFile("songs"); // the library's folder can't be made: every save fails
+        SongLibrary library = new SongLibrary(notAFolder, new FakeSource(), null);
+        List<String> told = new ArrayList<>();
+        library.onProblem(told::add);
+        library.keepPrint("a", new float[]{1});
+        library.keepPrint("b", new float[]{1});
+        library.remember(new Song("k", "T", "A"), "a");
+        assertEquals(told.toString(), 1, told.size());
+        assertTrue(told.get(0), told.get(0).startsWith("Songs can't be kept"));
+    }
+
+    @Test
+    public void onlyTheLatestSongsHeardBeforeAreLookedThrough() throws Exception {
+        SongLibrary library = new SongLibrary(folder.getRoot(), new FakeSource(), null);
+        for (int i = 0; i < Tracker.KNOWN_MAX + 10; i++) {
+            String id = "v" + i;
+            try (FileOutputStream out = new FileOutputStream(new File(folder.getRoot(), id + ".webm"))) {
+                out.write(new byte[10]);
+            }
+            library.keepPrint(id, new float[]{i});
+            library.remember(new Song("k" + i, "T" + i, "A"), id);
+        }
+        List<Tracker.Known> known = library.heardBefore();
+        assertEquals(Tracker.KNOWN_MAX, known.size());
+        assertEquals("the latest first", "v" + (Tracker.KNOWN_MAX + 9), known.get(0).videoId);
+    }
 }

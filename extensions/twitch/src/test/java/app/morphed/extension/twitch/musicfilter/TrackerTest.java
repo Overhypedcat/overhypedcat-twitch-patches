@@ -254,4 +254,49 @@ public class TrackerTest {
         assertEquals(Arrays.toString(new float[]{4, 5, 6, 0, 1, 2, 3, 4, 5, 6}), Arrays.toString(latest.samples));
         assertNull(heard.latest(11));
     }
+
+    @Test
+    public void aRetryWhileShazamMustWaitIsKeptAndDoneLater() {
+        SongCopy copy = song(40);
+        Heard heard = heardFrom(copy, 5 * RATE, 12);
+        FakeClock clock = new FakeClock();
+        Events events = new Events();
+        int[] asked = {0};
+        Song shazamSays = new Song("k", "Title", "Artist", 5.0);
+        Budget budget = new Budget(clock);
+        Tracker tracker = new Tracker(heard, new FakeLibrary(copy), sound -> {
+            asked[0]++;
+            return shazamSays;
+        }, clock, budget, events);
+        tracker.look();
+        assertNotNull(tracker.playing);
+        budget.take();
+        budget.take(); // used up: 40 s to wait
+
+        tracker.retrySoon();
+        tracker.look();
+        assertEquals(1, asked[0]);
+        assertEquals("Retrying in about a minute, once Shazam can be asked again",
+                events.steps.get(events.steps.size() - 1));
+        assertTrue("not a problem: " + events.problems, events.problems.isEmpty());
+        assertNotNull("the song is still taken out meanwhile", tracker.playing);
+
+        clock.now += 41;
+        tracker.look();
+        assertTrue(events.steps.toString(), events.steps.contains("Retrying from the start"));
+        assertEquals("asked afresh", 2, asked[0]);
+    }
+
+    @Test
+    public void anEndedSessionLetsGoOfTheSong() {
+        SongCopy copy = song(40);
+        Heard heard = heardFrom(copy, 5 * RATE, 12);
+        FakeClock clock = new FakeClock();
+        Tracker tracker = new Tracker(heard, new FakeLibrary(copy), sound -> new Song("k", "T", "A", 5.0), clock,
+                new Budget(clock), new Events());
+        tracker.look();
+        assertNotNull(tracker.playing);
+        tracker.release();
+        assertNull(tracker.playing);
+    }
 }

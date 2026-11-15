@@ -118,7 +118,7 @@ public final class SongRemoval {
     // --- the audio renderer
 
     /** One renderer's delay line and filter, and the buffer its filtered sound is handed back in. */
-    private static final class Renderer {
+    static final class Renderer {
         final int rate, channels;
         final boolean usable;
         final Filter filter;
@@ -231,7 +231,7 @@ public final class SongRemoval {
     }
 
     /** After a failure: the sound as it is, LATENCY behind like the filter's, so the picture stays in step. */
-    private static ByteBuffer delayed(Renderer state, ByteBuffer buffer, int size) {
+    static ByteBuffer delayed(Renderer state, ByteBuffer buffer, int size) {
         int latency = (Canceller.DELAY + Canceller.HOP) * state.channels; // exactly the filter's delay
         if (state.delay == null) state.delay = new short[latency];
         ByteBuffer in = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN);
@@ -246,7 +246,7 @@ public final class SongRemoval {
         return out;
     }
 
-    private static ByteBuffer process(Object renderer, Renderer state, ByteBuffer buffer, int size) {
+    static ByteBuffer process(Object renderer, Renderer state, ByteBuffer buffer, int size) {
         boolean on = PatchSettings.songRemoval();
         boolean audible = volume(renderer) > 0.001f;
         // Only the stream opened to watch (not a preview on the home or Following page), while it plays with sound.

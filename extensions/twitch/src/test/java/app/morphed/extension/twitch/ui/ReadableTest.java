@@ -36,4 +36,24 @@ public class ReadableTest {
         assertEquals("Running, 120 of 512 MB memory used, 30 requests",
                 Readable.message("Status: threads=80, memory=120/512MB, 30 requests"));
     }
+
+    @Test
+    public void whatIsntAnAddressIsShownAsItIs() {
+        assertEquals("not an address", Readable.what("not an address"));
+        assertEquals("the stream's playlist list", Readable.what("https://usher.ttvnw.net/api/channel/hls/x.m3u8"));
+        assertEquals("a video piece (edge-1)", Readable.what("https://edge-1.abs.hls.ttvnw.net/v1/segment/S9.ts"));
+    }
+
+    @Test
+    public void thePatchesTechnicalLinesArePlainWords() {
+        assertNull(Readable.message("Player HTTP client created: okhttp"));
+        assertNull(Readable.message("Player 3 created, 1 alive"));
+        assertEquals("Song removal: the song's copy is ready (1.5 s to get it, 0.3 s to prepare it)",
+                Readable.message("Song removal: Copy abc123 ready: got it in 1500 ms, prepared in 300 ms"));
+        assertEquals("Quality unlock: a request went without the VPN (the VPN isn't connected)",
+                Readable.message("Quality unlock: edge/x.ts goes direct (the VPN isn't connected)"));
+        assertEquals("Watching somebody", Readable.message("Watching somebody as stream: https://usher.ttvnw.net/x"));
+        assertEquals("Song removal: watching somebody", Readable.message("Song removal: stream is channel:somebody"));
+        assertEquals("Song removal: watching a past broadcast", Readable.message("Song removal: stream is vod:123"));
+    }
 }

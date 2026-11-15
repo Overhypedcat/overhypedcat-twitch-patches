@@ -45,4 +45,29 @@ public class PatchSettingsTest {
         PatchSettings.set(PatchSettings.SONG_REMOVAL, true);
         assertFalse(PatchSettings.songRemoval());
     }
+
+    @Test
+    public void aSwitchWithNoStreamGoesBackOff() {
+        PatchSettings.setForTest(true, false);
+        List<String> told = new ArrayList<>();
+        PatchSettings.Listener listener = (key, on) -> told.add(key + "=" + on);
+        PatchSettings.addListener(listener);
+        try {
+            PatchSettings.set(PatchSettings.SONG_REMOVAL, true);
+            assertEquals("the switch is told to go back", "[song_removal=false]", told.toString());
+        } finally {
+            PatchSettings.removeListener(listener);
+        }
+    }
+
+    @Test
+    public void aPastBroadcastHasItsOwnSwitch() {
+        PatchSettings.setForTest(true, false);
+        PatchSettings.watching("channel:a");
+        assertFalse(PatchSettings.watchingVideo());
+        PatchSettings.set(PatchSettings.SONG_REMOVAL, true);
+        PatchSettings.watching("vod:123");
+        assertTrue(PatchSettings.watchingVideo());
+        assertFalse("its channel being on doesn't switch it on", PatchSettings.songRemoval());
+    }
 }
