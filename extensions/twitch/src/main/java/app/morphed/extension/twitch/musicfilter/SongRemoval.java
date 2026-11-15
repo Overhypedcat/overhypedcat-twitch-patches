@@ -233,7 +233,8 @@ public final class SongRemoval {
     private static ByteBuffer process(Object renderer, Renderer state, ByteBuffer buffer, int size) {
         boolean on = PatchSettings.songRemoval();
         boolean audible = volume(renderer) > 0.001f;
-        Session current = on && audible ? sessionFor(streamKey) : null;
+        // Only the stream opened to watch (not a preview on the home or Following page), while it plays with sound.
+        Session current = on && audible && app.morphed.extension.twitch.patches.Watching.active() ? sessionFor(streamKey) : null;
         if (current != state.feeding) {
             if (current != null) {
                 current.attached(state);

@@ -35,7 +35,7 @@ public final class Readable {
         if (request.matches()) {
             String result = request.group(3);
             boolean failed = !Character.isDigit(result.charAt(0)) || Integer.parseInt(result) >= 400;
-            if (!failed) return null;
+            if (!failed || result.contains("Blocked by Twitch Morphed")) return null; // (the ad blocker's own blocks)
             String what = what(request.group(2));
             String via = request.group(1).equals("VPN") ? " through the VPN" : "";
             return what + via + " failed: " + (result.startsWith("failed: ") ? shorten(result.substring(8)) : "error " + result);

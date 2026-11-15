@@ -2,6 +2,7 @@ package app.morphed.extension.twitch.settings;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.graphics.Typeface;
 import android.text.TextUtils;
 import android.util.Log;
@@ -10,6 +11,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -21,7 +23,7 @@ import app.morphed.extension.twitch.musicfilter.SongRemoval;
 import app.morphed.extension.twitch.patches.DebugLog;
 import app.morphed.extension.twitch.ui.Squircle;
 import app.morphed.extension.twitch.ui.Theme;
-import app.morphed.extension.twitch.ui.Toggle;
+import app.morphed.extension.twitch.ui.TwitchFonts;
 import app.morphed.extension.twitch.unlock.QualityUnlock;
 
 /**
@@ -136,13 +138,14 @@ public final class PlayerOptionsSection {
         Theme theme = new Theme(activity);
         LinearLayout section = new LinearLayout(activity);
         section.setOrientation(LinearLayout.VERTICAL);
-        int side = Math.max(theme.dp(16), leftEdge(sheetRow)); // where the sheet's own rows start
+        int side = leftEdge(sheetRow); // where the sheet's own rows start (its list may already be inset)
         section.setPadding(0, theme.dp(12), 0, theme.dp(24));
 
         TextView header = new TextView(activity);
         header.setText("PATCHES");
         header.setTextColor(theme.dark ? 0xFFDEDEE3 : 0xFF3A3A3D); // as the sheet's own section titles
-        header.setTextSize(18);
+        header.setTextSize(19);
+        header.setTypeface(TwitchFonts.regular(activity));
         header.setPadding(side, theme.dp(12), side, theme.dp(10));
         section.addView(header);
 
@@ -151,11 +154,12 @@ public final class PlayerOptionsSection {
         TextView songStatus = status(activity, theme, side);
         TextView retry = new TextView(activity);
         retry.setText("Retry");
-        retry.setTextColor(Theme.PURPLE);
+        retry.setTextColor(theme.text);
         retry.setTextSize(13);
-        retry.setTypeface(Typeface.DEFAULT_BOLD);
-        retry.setPadding(theme.dp(12), theme.dp(6), theme.dp(12), theme.dp(6));
-        retry.setBackground(new Squircle(theme.dark ? 0x269147FF : 0x1A9147FF, theme.dpf(10)));
+        retry.setTypeface(TwitchFonts.semiBold(activity));
+        retry.setPadding(theme.dp(14), theme.dp(7), theme.dp(14), theme.dp(7));
+        // as Twitch's secondary buttons (Subscribe): a grey pill
+        retry.setBackground(new Squircle(theme.dark ? 0xFF2F2F35 : 0xFFE5E5E9, theme.dpf(16)));
         retry.setOnClickListener(v -> SongRemoval.retry());
         LinearLayout retryLine = new LinearLayout(activity);
         retryLine.setPadding(side, 0, side, theme.dp(4));
@@ -214,15 +218,14 @@ public final class PlayerOptionsSection {
         return section;
     }
 
-    /** Where a sheet row's content starts, from the left of the scrolling list. */
+    /** Where a sheet row starts, from the left of the scrolling list, measured on screen. */
     private static int leftEdge(View row) {
-        int left = row.getPaddingLeft();
-        for (View v = row; v != null && !(v.getParent() instanceof ScrollView); v = (View) v.getParent()) {
-            left += v.getLeft();
-            if (!(v.getParent() instanceof View)) break;
-        }
-        // the content container's own left is 0 inside the list; the row's offset is what counts
-        return left;
+        View list = row;
+        while (list.getParent() instanceof View && !(list.getParent() instanceof ScrollView)) list = (View) list.getParent();
+        int[] rowAt = new int[2], listAt = new int[2];
+        row.getLocationOnScreen(rowAt);
+        list.getLocationOnScreen(listAt);
+        return Math.max(0, rowAt[0] - listAt[0]) + row.getPaddingLeft();
     }
 
     /** The section's lines changed: React Native doesn't measure it again, so it's placed again here. */
@@ -234,7 +237,9 @@ public final class PlayerOptionsSection {
 
     private static TextView status(Context context, Theme theme, int side) {
         TextView status = new TextView(context);
-        status.setTextSize(13);
+        status.setTextSize(14);
+        status.setTypeface(TwitchFonts.regular(context));
+        status.setLineSpacing(0, 1.1f);
         status.setMaxLines(3);
         status.setEllipsize(TextUtils.TruncateAt.END);
         status.setPadding(0, theme.dp(2), 0, 0);
@@ -252,29 +257,43 @@ public final class PlayerOptionsSection {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(side, theme.dp(10), side, theme.dp(10));
-        row.setMinimumHeight(theme.dp(56));
+        row.setMinimumHeight(theme.dp(52));
 
         LinearLayout texts = new LinearLayout(context);
         texts.setOrientation(LinearLayout.VERTICAL);
         TextView name = new TextView(context);
         name.setText(title);
         name.setTextColor(theme.text);
-        name.setTextSize(16);
-        name.setTypeface(Typeface.DEFAULT_BOLD);
+        name.setTextSize(15);
+        name.setTypeface(TwitchFonts.semiBold(context)); // as the sheet's own row titles
         texts.addView(name);
         if (status != null) texts.addView(status);
-        row.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        LinearLayout.LayoutParams textArea = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+        textArea.rightMargin = theme.dp(12);
+        row.addView(texts, textArea);
 
-        Toggle toggle = new Toggle(context, theme, PatchSettings.get(key));
+        // Android's own switch, in the colors of the sheet's switches (React Native draws them the same way).
+        Switch toggle = new Switch(context);
+        toggle.setChecked(PatchSettings.get(key));
+        int[][] states = {{android.R.attr.state_checked}, {}};
+        toggle.setThumbTintList(new ColorStateList(states, new int[]{0xFF5C16C5, theme.dark ? 0xFFADADB8 : 0xFFFFFFFF}));
+        toggle.setTrackTintList(new ColorStateList(states, new int[]{0xFFA970FF, theme.dark ? 0xFF53535F : 0xFF3A3A3D}));
         toggle.setContentDescription(title);
-        toggle.setListener(on -> {
+        boolean[] syncing = {false};
+        toggle.setOnCheckedChangeListener((button, on) -> {
+            if (syncing[0]) return;
             PatchSettings.set(key, on);
             DebugLog.log("Player Options: " + title + (on ? " on" : " off"));
         });
         row.addView(toggle);
-        row.setOnClickListener(v -> toggle.setOn(!toggle.isOn(), true));
+        row.setOnClickListener(v -> toggle.toggle());
         PatchSettings.Listener sync = (changed, on) -> {
-            if (changed.equals(key)) App.onMain(() -> toggle.setOn(on, false));
+            if (!changed.equals(key)) return;
+            App.onMain(() -> {
+                syncing[0] = true;
+                toggle.setChecked(on);
+                syncing[0] = false;
+            });
         };
         row.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
             @Override

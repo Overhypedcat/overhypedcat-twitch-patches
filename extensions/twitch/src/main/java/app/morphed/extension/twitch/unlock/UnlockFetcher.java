@@ -92,14 +92,28 @@ public final class UnlockFetcher {
 
     String[] accessToken(Web web, String channel, String token, long deadline) throws Failed {
         Failed first = null;
+        StringBuilder both = new StringBuilder();
         for (String clientId : new String[]{ANDROID_CLIENT_ID, WEB_CLIENT_ID}) {
             try {
                 return accessToken(web, channel, token, clientId, left(deadline));
             } catch (Failed failed) {
                 if (first == null) first = failed;
+                if (both.length() > 0) both.append("; ");
+                both.append(failed.getMessage());
             }
         }
-        throw first;
+        // Both tries told, so the reason can be reported as it was.
+        throw first.login ? new Failed(both.toString(), true) : first;
+    }
+
+    private static String clientName(String clientId) {
+        return ANDROID_CLIENT_ID.equals(clientId) ? "app client" : "web client";
+    }
+
+    /** The start of an answer, on one line. */
+    static String said(String text) {
+        String line = text.replaceAll("\\s+", " ").trim();
+        return line.length() > 140 ? line.substring(0, 140) + "…" : line;
     }
 
     private String[] accessToken(Web web, String channel, String token, String clientId, int timeoutMs) throws Failed {
@@ -118,8 +132,10 @@ public final class UnlockFetcher {
             throw new Failed("Twitch couldn't be reached through the VPN: " + e.getMessage(), false);
         }
         String text = response.text();
-        if (response.status == 401 || text.toLowerCase(Locale.ROOT).contains("authorization")) {
-            throw new Failed("Twitch rejected the login, log in to Twitch again", true);
+        if (response.status == 401 || response.status == 403) {
+            // What Twitch said, so the reason can be reported (its answer never holds the login itself).
+            throw new Failed("Twitch rejected the login (" + clientName(clientId) + ", " + response.status + ": "
+                    + said(text) + ")", true);
         }
         Object answer;
         try {

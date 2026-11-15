@@ -23,6 +23,7 @@ import java.util.List;
 import app.morphed.extension.twitch.patches.DebugLog;
 import app.morphed.extension.twitch.ui.Squircle;
 import app.morphed.extension.twitch.ui.Theme;
+import app.morphed.extension.twitch.ui.TwitchFonts;
 import app.morphed.extension.twitch.unlock.QualityUnlock;
 import app.morphed.extension.twitch.unlock.VpnServers;
 
@@ -60,7 +61,7 @@ public final class VpnServersPage {
         title.setText("VPN servers");
         title.setTextColor(theme.text);
         title.setTextSize(20);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTypeface(TwitchFonts.semiBold(activity));
         title.setPadding(theme.dp(8), 0, 0, 0);
         bar.addView(title);
         page.addView(bar);
@@ -75,6 +76,7 @@ public final class VpnServersPage {
 
         message = new TextView(activity);
         message.setTextSize(14);
+        message.setTypeface(TwitchFonts.regular(activity));
         message.setPadding(theme.dp(4), theme.dp(12), theme.dp(4), 0);
         message.setVisibility(View.GONE);
         body.addView(message);
@@ -102,6 +104,15 @@ public final class VpnServersPage {
         scroll.addView(body);
         page.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         dialog.setContentView(page);
+        Window window = dialog.getWindow();
+        if (window != null) { // the status bar in the page's colors, its icons readable on them
+            window.setStatusBarColor(theme.background);
+            window.setNavigationBarColor(theme.background);
+            if (!theme.dark && android.os.Build.VERSION.SDK_INT >= 26) {
+                window.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+                        | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+            }
+        }
         dialog.setOnDismissListener(d -> {
             open = new WeakReference<>(null);
             if (changed) app.morphed.extension.twitch.ui.Screens.refreshSettingsRows();
@@ -131,7 +142,7 @@ public final class VpnServersPage {
         button.setText(text);
         button.setGravity(Gravity.CENTER);
         button.setTextSize(15);
-        button.setTypeface(Typeface.DEFAULT_BOLD);
+        button.setTypeface(TwitchFonts.semiBold(activity));
         button.setTextColor(filled ? 0xFFFFFFFF : theme.text);
         Squircle shape = new Squircle(filled ? Theme.PURPLE : theme.surface, theme.dpf(12));
         if (!filled) shape.border(theme.hairline, theme.dpf(1));
@@ -179,6 +190,7 @@ public final class VpnServersPage {
             none.setText("No servers yet");
             none.setTextColor(theme.secondary);
             none.setTextSize(15);
+            none.setTypeface(TwitchFonts.regular(activity));
             none.setPadding(theme.dp(16), theme.dp(18), theme.dp(16), theme.dp(18));
             card.addView(none);
         }
@@ -191,7 +203,8 @@ public final class VpnServersPage {
             TextView label = new TextView(activity);
             label.setText(name);
             label.setTextColor(theme.text);
-            label.setTextSize(16);
+            label.setTextSize(15);
+            label.setTypeface(TwitchFonts.semiBold(activity));
             row.addView(label, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
             View remove = new Cross(activity, theme);
             remove.setContentDescription("Remove " + name);

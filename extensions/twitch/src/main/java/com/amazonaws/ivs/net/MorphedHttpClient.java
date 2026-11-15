@@ -20,6 +20,7 @@ import app.morphed.extension.twitch.settings.PatchSettings;
 import app.morphed.extension.twitch.unlock.QualityUnlock;
 import app.morphed.extension.twitch.hls.UrlKey;
 import app.morphed.extension.twitch.patches.DebugLog;
+import app.morphed.extension.twitch.patches.Watching;
 import app.morphed.extension.twitch.patches.StreamAdsPatch;
 
 /**
@@ -110,6 +111,7 @@ public final class MorphedHttpClient implements HttpClient {
         String channel = QualityUnlock.channelOf(url);
         boolean preview = channel != null && StreamAdsPatch.isPreview(url);
         if (!preview) noteStream(url, channel);
+        Watching.request(url);
         if (QualityUnlock.routes(url)) {
             // The video of an unlocked stream: through the VPN tunnel, like the playlist it came from.
             EXECUTOR.execute(() -> viaTunnel(request, callback, url, start));
@@ -117,12 +119,19 @@ public final class MorphedHttpClient implements HttpClient {
         }
         boolean unlock = channel != null && !preview && app.morphed.extension.twitch.Included.qualityUnlock()
                 && PatchSettings.qualityUnlock();
-        direct(request, callback, url, start, unlock, StreamAdsPatch.shouldInspect(url));
+        direct(request, callback, url, start, unlock, StreamAdsPatch.shouldInspect(url), !preview && isStreamList(url));
+    }
+
+    /** A stream's playlist list (live or a past broadcast): the one opened to watch, unless it's a preview's. */
+    private static boolean isStreamList(String url) {
+        return url.contains("usher.ttvnw.net") && url.contains(".m3u8")
+                && (QualityUnlock.channelOf(url) != null || url.contains("/vod/"));
     }
 
     /** A request over the normal connection, its playlist unlocked and ad-blocked as needed. */
-    private void direct(Request request, ResponseCallback callback, String url, long start, boolean unlock, boolean inspect) {
-        if (!inspect && !unlock) {
+    private void direct(Request request, ResponseCallback callback, String url, long start, boolean unlock, boolean inspect,
+                        boolean opened) {
+        if (!inspect && !unlock && !opened) {
             // Timed only while the debug mode is on, so normal playback pays nothing for it.
             delegate.execute(request, DebugLog.isOn() ? timed(url, start, callback) : callback);
             return;
@@ -146,7 +155,7 @@ public final class MorphedHttpClient implements HttpClient {
                     void onBody(byte[] body) {
                         long downloaded = SystemClock.elapsedRealtime();
                         EXECUTOR.execute(() -> deliver(request, response, callback, url, body, start, downloaded,
-                                unlock, inspect));
+                                unlock, inspect, opened));
                     }
 
                     @Override
@@ -182,7 +191,7 @@ public final class MorphedHttpClient implements HttpClient {
     private void tunnelFallback(Request request, ResponseCallback callback, String url, long start, String why) {
         DebugLog.log("Quality unlock: " + UrlKey.of(url) + " goes direct (" + why + ")");
         QualityUnlock.tunnelFailed(why);
-        direct(request, callback, url, start, false, StreamAdsPatch.shouldInspect(url));
+        direct(request, callback, url, start, false, StreamAdsPatch.shouldInspect(url), false);
     }
 
     /** A request of an unlocked stream, made through the VPN tunnel and answered to the player. */
@@ -250,7 +259,7 @@ public final class MorphedHttpClient implements HttpClient {
     }
 
     private static void deliver(Request request, Response response, ResponseCallback callback, String url,
-                                byte[] body, long start, long downloaded, boolean unlock, boolean inspect) {
+                                byte[] body, long start, long downloaded, boolean unlock, boolean inspect, boolean opened) {
         // The player may have given up on this request (left the stream, switched quality, timed out).
         if (request.isCancelled()) {
             if (DebugLog.isOn()) DebugLog.log("Playlist " + UrlKey.of(url) + " cancelled before processing");
@@ -264,6 +273,8 @@ public final class MorphedHttpClient implements HttpClient {
             // The unlock first (it may hand over the VPN's playlist), then the ad blocker learns that one.
             if (unlock) playlist = QualityUnlock.master(url, playlist, false);
             if (inspect) playlist = StreamAdsPatch.process(url, playlist);
+            // The stream opened to watch: song removal works for it while its playlists are asked for.
+            if (opened && playlist != null) Watching.opened(url, playlist);
             if (playlist != null && !playlist.equals(original)) {
                 output = playlist.getBytes(StandardCharsets.UTF_8);
             }

@@ -73,7 +73,9 @@ public class UnlockTest {
             fail();
         } catch (UnlockFetcher.Failed failed) {
             assertTrue(failed.login);
-            assertEquals("Twitch rejected the login, log in to Twitch again", failed.getMessage());
+            assertTrue(failed.getMessage(), failed.getMessage().startsWith("Twitch rejected the login (app client, 401: "));
+            assertTrue(failed.getMessage(), failed.getMessage().contains("; Twitch rejected the login (web client, 401: "));
+            assertTrue(failed.getMessage(), failed.getMessage().contains("token is invalid"));
         }
     }
 
@@ -92,6 +94,17 @@ public class UnlockTest {
 
     private static Web.Response ok(String body) {
         return new Web.Response(200, Collections.emptyMap(), body.getBytes(StandardCharsets.UTF_8));
+    }
+
+    @Test
+    public void onlyTheUnlockedStreamsOwnAddressesGoThroughTheTunnel() {
+        QualityUnlock.learnHosts(UNLOCKED + "#EXT-X-PREFETCH:https://edge-1.abs.hls.ttvnw.net/v1/segment/S9.ts\n"
+                + "https://edge-1.abs.hls.ttvnw.net/v1/segment/S8.ts?x=1\n");
+        assertTrue(QualityUnlock.knows("https://b.playlist.ttvnw.net/v1/1440.m3u8?p=2"));
+        assertTrue(QualityUnlock.knows("https://edge-1.abs.hls.ttvnw.net/v1/segment/S8.ts"));
+        assertTrue(QualityUnlock.knows("https://edge-1.abs.hls.ttvnw.net/v1/segment/S9.ts"));
+        // a preview served from the same video server is not the unlocked stream
+        assertTrue(!QualityUnlock.knows("https://edge-1.abs.hls.ttvnw.net/v1/segment/PREVIEW1.ts"));
     }
 
     @Test

@@ -68,7 +68,7 @@ public final class QualityUnlock {
     }
 
     private static final Map<String, Decision> DECIDED = new ConcurrentHashMap<>();
-    private static final Set<String> TUNNEL_HOSTS = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    private static final Set<String> TUNNEL_ADDRESSES = Collections.newSetFromMap(new ConcurrentHashMap<>());
     private static final CopyOnWriteArrayList<StatusListener> LISTENERS = new CopyOnWriteArrayList<>();
     private static final UnlockFetcher FETCHER = new UnlockFetcher();
     private static final Object TUNNEL_LOCK = new Object(); // only swaps the reference: no I/O under it
@@ -91,7 +91,7 @@ public final class QualityUnlock {
             if (!PatchSettings.QUALITY_UNLOCK.equals(key)) return;
             if (!on) {
                 DECIDED.clear();
-                TUNNEL_HOSTS.clear();
+                TUNNEL_ADDRESSES.clear();
                 BACKGROUND.execute(QualityUnlock::closeTunnel); // (closing sends packets: never on the main thread)
                 publish(new Status("Off", false));
             } else {
@@ -144,12 +144,14 @@ public final class QualityUnlock {
         return channel.toLowerCase(java.util.Locale.ROOT);
     }
 
-    /** Whether a request should go through the tunnel: the video of a stream that was unlocked. */
+    /**
+     * Whether a request should go through the tunnel: exactly the playlists and video pieces of the stream that
+     * was unlocked (named by its playlists from the tunnel); nothing else, previews included.
+     */
     public static boolean routes(String url) {
-        if (TUNNEL_HOSTS.isEmpty() || !Included.qualityUnlock() || !PatchSettings.qualityUnlock()
+        if (TUNNEL_ADDRESSES.isEmpty() || !Included.qualityUnlock() || !PatchSettings.qualityUnlock()
                 || url.contains("usher.ttvnw.net")) return false;
-        String host = host(url);
-        return host != null && TUNNEL_HOSTS.contains(host);
+        return TUNNEL_ADDRESSES.contains(app.morphed.extension.twitch.hls.UrlKey.of(url));
     }
 
     static String host(String url) {
@@ -158,6 +160,11 @@ public final class QualityUnlock {
         } catch (java.net.MalformedURLException e) {
             return null;
         }
+    }
+
+    /** Whether this address is one of the unlocked stream's (for tests: routes() also asks the switches). */
+    static boolean knows(String url) {
+        return TUNNEL_ADDRESSES.contains(app.morphed.extension.twitch.hls.UrlKey.of(url));
     }
 
     /** The tunnel's HTTP client for routed requests, or null when the tunnel is down. */
@@ -174,14 +181,16 @@ public final class QualityUnlock {
         if (!status.problem) publish(new Status("The VPN stopped answering (" + why + "), the stream plays without the unlock", true));
     }
 
-    /** The hosts a playlist from the tunnel points at: their requests go through the tunnel too. */
+    private static final Pattern ADDRESS = Pattern.compile("https?://[^\\s\"]+");
+    private static final int MAX_ADDRESSES = 4000;
+
+    /** The addresses a playlist from the tunnel names (playlists, video pieces): they go through the tunnel too. */
     public static void learnHosts(String playlist) {
-        for (String line : playlist.split("\n")) {
-            String trimmed = line.trim();
-            if (trimmed.startsWith("http")) {
-                String host = host(trimmed);
-                if (host != null && !host.contains("usher.")) TUNNEL_HOSTS.add(host);
-            }
+        if (TUNNEL_ADDRESSES.size() > MAX_ADDRESSES) TUNNEL_ADDRESSES.clear(); // old pieces; the current ones come again
+        Matcher address = ADDRESS.matcher(playlist);
+        while (address.find()) {
+            String url = address.group();
+            if (!url.contains("usher.")) TUNNEL_ADDRESSES.add(app.morphed.extension.twitch.hls.UrlKey.of(url));
         }
     }
 
@@ -205,7 +214,7 @@ public final class QualityUnlock {
     private static String decide(String channel, String direct) {
         if (!channel.equals(lastChannel)) { // a new stream: the previous one's routing is done with
             lastChannel = channel;
-            TUNNEL_HOSTS.clear();
+            TUNNEL_ADDRESSES.clear();
             for (String decided : new ArrayList<>(DECIDED.keySet())) if (!decided.equals(channel)) DECIDED.remove(decided);
         }
         Decision decision = DECIDED.get(channel);
@@ -320,7 +329,7 @@ public final class QualityUnlock {
             if (System.currentTimeMillis() - lastUsedAt >= IDLE_CLOSE_MS) {
                 DebugLog.log("Quality unlock: tunnel idle, closed");
                 closeTunnel();
-                TUNNEL_HOSTS.clear();
+                TUNNEL_ADDRESSES.clear();
                 // Only the streams that went through it are decided again; "nothing locked" stays decided.
                 DECIDED.values().removeIf(decision -> decision.viaVpn);
             } else {
@@ -344,7 +353,7 @@ public final class QualityUnlock {
     public static void serverRemoved(String name) {
         VpnTunnel current = tunnel;
         if (current != null && current.config.name.equals(name)) {
-            TUNNEL_HOSTS.clear();
+            TUNNEL_ADDRESSES.clear();
             DECIDED.clear();
             BACKGROUND.execute(QualityUnlock::closeTunnel);
         }
