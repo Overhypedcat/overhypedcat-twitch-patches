@@ -9,7 +9,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Works out what's playing and where, from what was heard (a port of Mor's relay.Tracker: same timings, budget
+ * Works out what's playing and where, from what was heard (a port of Mor Assistant's relay.Tracker: same timings, budget
  * and decisions). The filter reads {@link #playing} as it goes; the listener hears what it's doing and what went
  * wrong, never kept quiet.
  */
@@ -110,6 +110,7 @@ public final class Tracker {
 
     public volatile Playing playing;
     private volatile boolean retryWanted;
+    private boolean retryTold;
     private int round;
     private String[] avoid; // (song key, video id) of a copy a retry gave up on
     private int misses;
@@ -126,6 +127,8 @@ public final class Tracker {
     private SongCopy loaded; // one copy kept: memory
     private long askedFrom;
     private final Map<String, Long> shifts = new HashMap<>();
+    /** The prints read so far, by video: they don't change, and are looked through every few seconds. */
+    private final Map<String, float[]> prints = new HashMap<>();
 
     public Tracker(Heard heard, Library library, Recognizer recognizer, Clock clock, Budget budget, Listener listener) {
         this.heard = heard;
@@ -143,9 +146,17 @@ public final class Tracker {
             listener.problem(null); // its wait is over
         }
         if (retryWanted) {
-            retryWanted = false;
-            retry();
-            return;
+            if (shazamWait() <= 0) {
+                retryWanted = false;
+                retryTold = false;
+                retry();
+                return;
+            }
+            if (!retryTold) { // kept until Shazam can be asked; the song (if any) is still followed meanwhile
+                retryTold = true;
+                listener.step("Retrying " + in((int) Math.ceil(shazamWait())) + ", once Shazam can be asked again");
+                tellReady();
+            }
         }
         if (clock.seconds() < nextAt) return;
         if (playing != null) check();
@@ -161,13 +172,12 @@ public final class Tracker {
             limited += 1;
             shazamAfter = clock.seconds() + wait;
             refused = true;
-            listener.problem(problem.getMessage() + ", asking again in " + wait + " s");
+            listener.problem(problem.getMessage() + ", asking again " + in(wait));
             tellReady();
         } catch (SongProblem problem) { // Shazam or YouTube couldn't be reached: the next look tries again
             listener.problem(problem.getMessage());
         } catch (Throwable error) { // never the stream's end, but always said
-            listener.problem("Song removal ran into an error: " + error.getClass().getSimpleName() + ": "
-                    + error.getMessage());
+            listener.problem("Song removal ran into an error: " + app.morphed.extension.twitch.Messages.of(error));
             nextAt = clock.seconds() + LISTEN_S;
         }
     }
@@ -178,7 +188,7 @@ public final class Tracker {
         Heard.Stretch sound = heard.latest(FOLLOW_S * RATE);
         Playing current = playing;
         if (sound != null && sound.start + current.offset >= current.copy.length()) {
-            set(null, NEXT_SONG_WAIT_S); // the song is over: listen for the next one right away
+            set(null, NEXT_SONG_WAIT_S); // the song is over: listen for the next one after a short wait
             listen(null, false);
             return;
         }
@@ -205,13 +215,20 @@ public final class Tracker {
         retryWanted = true;
     }
 
+    /** A wait as words that stay true while they're shown (they aren't counted down). */
+    static String in(int seconds) {
+        if (seconds <= 20) return "in a few seconds";
+        if (seconds <= 90) return "in about a minute";
+        return "in about " + Math.round(seconds / 60.0) + " minutes";
+    }
+
+    /** The session ended: the song's copy is let go (memory). */
+    void release() {
+        playing = null;
+        loaded = null;
+    }
+
     private void retry() throws SongProblem {
-        double wait = shazamWait();
-        if (wait > 0) {
-            listener.problem("Shazam can be asked again in " + (int) Math.ceil(wait) + " s");
-            tellReady();
-            return;
-        }
         Playing current = playing;
         avoid = current != null ? new String[]{current.song.key, current.copy.videoId} : null;
         round += 1;
@@ -421,15 +438,21 @@ public final class Tracker {
         List<Known> before = library.heardBefore();
         if (before.size() > KNOWN_MAX) before = before.subList(0, KNOWN_MAX);
         if (stretch == null || before.isEmpty()) return null;
-        List<float[]> prints = new ArrayList<>();
+        List<float[]> read = new ArrayList<>();
         for (Known known : before) {
-            try {
-                prints.add(known.print.read());
-            } catch (Exception broken) {
-                prints.add(new float[0]); // a broken print: passed over, made again with its copy
+            float[] print = prints.get(known.videoId);
+            if (print == null) {
+                try {
+                    print = known.print.read();
+                    if (prints.size() >= KNOWN_MAX * 2) prints.clear(); // (only ever the latest few)
+                    prints.put(known.videoId, print);
+                } catch (Exception broken) {
+                    print = new float[0]; // a broken print: passed over, made again with its copy
+                }
             }
+            read.add(print);
         }
-        Long found = Align.known(stretch.samples, prints).at;
+        Long found = Align.known(stretch.samples, read).at;
         return found != null ? before.get(found.intValue()).song : null;
     }
 
@@ -460,7 +483,9 @@ public final class Tracker {
             loaded = copy;
             listener.timing("Copy " + videoId + " ready: got it in " + (got - started) + " ms, prepared in "
                     + (System.currentTimeMillis() - got) + " ms");
-            library.keepPrint(videoId, Align.thin(copy.reduced()));
+            float[] print = Align.thin(copy.reduced());
+            prints.put(videoId, print);
+            library.keepPrint(videoId, print);
         }
         return loaded;
     }

@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 import app.morphed.extension.twitch.vpn.WgConfig;
 
@@ -22,12 +23,15 @@ public final class VpnServers {
     /** A config's name as kept: the file name without folders and extension, plain characters only. */
     static String safeName(String name) {
         String base = new File(name == null ? "" : name).getName();
-        if (base.toLowerCase(java.util.Locale.ROOT).endsWith(".conf")) base = base.substring(0, base.length() - 5);
+        if (base.toLowerCase(Locale.ROOT).endsWith(".conf")) base = base.substring(0, base.length() - 5);
         String safe = base.replaceAll("[^A-Za-z0-9._ -]", "").trim();
         return safe.isEmpty() ? "server" : safe;
     }
 
-    /** Keeps a config; IllegalArgumentException saying what's wrong with it. Returns the name it's kept as. */
+    /**
+     * Keeps a config, in place of one of the same name. Returns the name it's kept as. Throws
+     * IllegalArgumentException saying what's wrong with the config, or IOException when it can't be saved.
+     */
     public synchronized String add(String name, String text) throws IOException {
         String safe = safeName(name);
         WgConfig.parse(safe, text); // refuses what isn't a usable WireGuard config
@@ -36,6 +40,35 @@ public final class VpnServers {
             out.write(text.getBytes(StandardCharsets.UTF_8));
         }
         return safe;
+    }
+
+    /** Whether a server of this name is kept already (adding one of the same name replaces it). */
+    public synchronized boolean has(String name) {
+        return new File(folder, safeName(name) + ".conf").isFile();
+    }
+
+    /** The first "Server N" not taken. */
+    public synchronized String freeName() {
+        for (int n = 1; ; n++) {
+            if (!has("Server " + n)) return "Server " + n;
+        }
+    }
+
+    /** A kept config's text (to put it back after a removal), or null. */
+    public synchronized String text(String name) {
+        File file = new File(folder, safeName(name) + ".conf");
+        try (FileInputStream in = new FileInputStream(file)) {
+            byte[] bytes = new byte[(int) file.length()];
+            int read = 0;
+            while (read < bytes.length) {
+                int n = in.read(bytes, read, bytes.length - read);
+                if (n < 0) break;
+                read += n;
+            }
+            return new String(bytes, 0, read, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            return null;
+        }
     }
 
     public synchronized boolean remove(String name) {

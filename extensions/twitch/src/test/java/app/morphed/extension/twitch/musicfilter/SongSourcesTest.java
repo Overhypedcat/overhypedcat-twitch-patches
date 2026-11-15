@@ -59,7 +59,7 @@ public class SongSourcesTest {
             new ShazamClient(down).recognize(new float[48000 * 10]);
             fail();
         } catch (SongProblem expected) {
-            assertEquals("Shazam couldn't be asked what's playing: no connection (amp.shazam.com not found)", expected.getMessage());
+            assertEquals("Shazam couldn't be asked what's playing: no internet connection", expected.getMessage());
         }
     }
 

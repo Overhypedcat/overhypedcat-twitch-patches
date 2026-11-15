@@ -5,7 +5,6 @@ import android.app.Activity;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
-import android.graphics.Typeface;
 import android.os.Build;
 import android.text.TextUtils;
 import android.util.DisplayMetrics;
@@ -73,6 +72,9 @@ public final class LogWindow {
         root.addView(window);
         shown = new WeakReference<>(window);
         DebugLog.removeListener(LISTENER);
+        synchronized (WAITING) { // the new window starts from the latest lines: what waited is in them
+            WAITING.setLength(0);
+        }
         DebugLog.addListener(LISTENER);
     }
 
@@ -97,7 +99,8 @@ public final class LogWindow {
             for (int i = 0; i < 50 && cut >= 0; i++) cut = TextUtils.indexOf(all, '\n', cut + 1);
             if (cut > 0) view.setText(all.subSequence(cut + 1, all.length()));
         }
-        if (atEnd && scroll != null) scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
+        ScrollView target = scroll; // (the window may be gone by the time this runs)
+        if (atEnd && target != null) target.post(() -> target.fullScroll(View.FOCUS_DOWN));
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -122,7 +125,7 @@ public final class LogWindow {
         title.setText("Debug mode");
         title.setTextColor(0xFFEFEFF1);
         title.setTextSize(13);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTypeface(TwitchFonts.semiBold(context));
         bar.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         IconButton fold = new IconButton(context, theme, IconButton.FOLD);
         IconButton close = new IconButton(context, theme, IconButton.CLOSE);
@@ -135,6 +138,7 @@ public final class LogWindow {
         ScrollView scrollView = new ScrollView(context);
         TextView lines = new TextView(context);
         lines.setTextSize(12);
+        lines.setTypeface(TwitchFonts.regular(context));
         lines.setLineSpacing(0, 1.15f);
         lines.setTextColor(0xFFDADADF);
         lines.setTextIsSelectable(false); // selectable text re-measures everything on each change
@@ -157,6 +161,19 @@ public final class LogWindow {
         float x = Float.isNaN(savedX) ? metrics.widthPixels - width - theme.dp(12) : savedX;
         float y = Float.isNaN(savedY) ? metrics.heightPixels - height - theme.dp(96) : savedY;
         panel.setX(x);
+        // On the screen whatever its size now (turned to landscape, the full-screen player): kept inside it.
+        root(activity).addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            @Override
+            public void onLayoutChange(View v, int l, int t, int r, int b, int ol, int ot, int or, int ob) {
+                if (panel.getParent() == null) {
+                    v.removeOnLayoutChangeListener(this);
+                    return;
+                }
+                if (r - l == or - ol && b - t == ob - ot) return;
+                panel.post(() -> keepInside(panel));
+            }
+        });
+        panel.post(() -> keepInside(panel));
         panel.setY(y);
 
         fold.setOnClickListener(v -> {
@@ -193,6 +210,29 @@ public final class LogWindow {
         return panel;
     }
 
+    private static ViewGroup root(Activity activity) {
+        return (ViewGroup) activity.getWindow().getDecorView();
+    }
+
+    /** Moves the window back inside its parent (and shrinks it to fit when the screen got smaller). */
+    private static void keepInside(View panel) {
+        View parent = (View) panel.getParent();
+        if (parent == null || parent.getWidth() == 0) return;
+        ViewGroup.LayoutParams params = panel.getLayoutParams();
+        if (params.width > parent.getWidth()) {
+            params.width = parent.getWidth();
+            panel.setLayoutParams(params);
+        }
+        if (params.height > 0 && params.height > parent.getHeight()) {
+            params.height = parent.getHeight();
+            panel.setLayoutParams(params);
+        }
+        float maxX = Math.max(0, parent.getWidth() - Math.min(panel.getWidth() > 0 ? panel.getWidth() : params.width, parent.getWidth()));
+        float maxY = Math.max(0, parent.getHeight() - Math.min(panel.getHeight() > 0 ? panel.getHeight() : Math.max(params.height, 0), parent.getHeight()));
+        panel.setX(Math.max(0, Math.min(panel.getX(), maxX)));
+        panel.setY(Math.max(0, Math.min(panel.getY(), maxY)));
+    }
+
     /** A small round button with a drawn icon (no image assets): fold, unfold or close. */
     static final class IconButton extends View {
         static final int FOLD = 0, UNFOLD = 1, CLOSE = 2;
@@ -200,6 +240,7 @@ public final class LogWindow {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint pressed = new Paint(Paint.ANTI_ALIAS_FLAG);
         private int shape;
+        private final android.graphics.Path highlight = new android.graphics.Path();
 
         IconButton(Context context, Theme theme, int shape) {
             super(context);
@@ -234,7 +275,11 @@ public final class LogWindow {
         @Override
         protected void onDraw(Canvas canvas) {
             float cx = getWidth() / 2f, cy = getHeight() / 2f, r = theme.dpf(6);
-            if (isPressed()) canvas.drawCircle(cx, cy, theme.dpf(16), pressed);
+            if (isPressed()) {
+                Squircle.path(new android.graphics.RectF(cx - theme.dpf(16), cy - theme.dpf(16), cx + theme.dpf(16),
+                        cy + theme.dpf(16)), theme.dpf(10), highlight);
+                canvas.drawPath(highlight, pressed);
+            }
             if (shape == CLOSE) {
                 canvas.drawLine(cx - r, cy - r, cx + r, cy + r, paint);
                 canvas.drawLine(cx - r, cy + r, cx + r, cy - r, paint);

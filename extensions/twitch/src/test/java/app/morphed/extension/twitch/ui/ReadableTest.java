@@ -30,7 +30,7 @@ public class ReadableTest {
     public void addressesAndCodesAreShortened() {
         assertEquals("16:20:00  Song removal: Removing Artist - Title",
                 Readable.of("16:20:00.001 Song removal: Removing Artist - Title"));
-        assertEquals("Quality unlock: tunnel up through usher.ttvnw.net token Cr4FAAAAAAAA…",
+        assertEquals("Quality unlock: connected to usher.ttvnw.net token Cr4FAAAAAAAA…",
                 Readable.message("Quality unlock: tunnel up through https://usher.ttvnw.net/api/x.m3u8?sig=1 token "
                         + "Cr4FAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"));
         assertEquals("Running, 120 of 512 MB memory used, 30 requests",

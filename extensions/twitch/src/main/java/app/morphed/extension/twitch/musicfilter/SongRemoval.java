@@ -9,17 +9,22 @@ import java.io.File;
 import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import app.morphed.extension.twitch.App;
+import app.morphed.extension.twitch.Messages;
 import app.morphed.extension.twitch.net.DirectWeb;
 import app.morphed.extension.twitch.patches.DebugLog;
+import app.morphed.extension.twitch.patches.Watching;
 import app.morphed.extension.twitch.settings.PatchSettings;
 
 /**
- * Song removal: takes the songs a streamer plays out of the stream's sound, the way Mor does.
+ * Song removal: takes the songs a streamer plays out of the stream's sound, the way Mor Assistant does.
  * <p>
  * The player's audio renderer hands every buffer here right before playing it ({@link #render}); it comes back
  * with the song subtracted. Each renderer runs a fixed delay line (the cancellers' frame), switch on or off, and
@@ -33,6 +38,9 @@ public final class SongRemoval {
     private static final int QUEUE = 16384;
     private static final long PROBLEM_TOAST_GAP_MS = 20_000;
     private static final long STALE_MS = 3_000;
+    /** A session heard nothing for this long (the stream was left, or paused): ended, its song's copy let go. */
+    private static final long IDLE_MS = 3 * 60_000;
+    static final String WAITING = "Waiting for the stream's sound";
 
     /** What the filter is doing, for the player's Options. */
     public static final class Status {
@@ -57,18 +65,19 @@ public final class SongRemoval {
     private static final Map<Object, Renderer> RENDERERS = new WeakHashMap<>();
     private static volatile Session session;
     private static volatile String streamKey = "";
-    private static volatile Status status = new Status(false, "Off", null, 0);
+    private static volatile Status status = new Status(false, WAITING, null, 0);
     private static Budget budget; // Shazam's, shared by every stream (one connection)
     private static SongLibrary library;
     private static volatile Field formatField, volumeField;
-    private static volatile boolean reflectionFailed;
+    private static volatile boolean reflectionFailed, volumeMissingTold;
     private static String lastToast;
     private static long lastToastAt;
 
     static {
         PatchSettings.addListener((key, on) -> {
             if (!PatchSettings.SONG_REMOVAL.equals(key)) return;
-            if (!on) stopSession("Off"); // (switched off here, or a stream it's off for is being watched)
+            if (!on) stopSession(WAITING); // (switched off here, or a stream it's off for is being watched)
+            else if (session == null) publish(new Status(false, WAITING, null, 0));
         });
     }
 
@@ -95,10 +104,15 @@ public final class SongRemoval {
         LISTENERS.remove(listener);
     }
 
-    /** The retry button: forget the song and ask Shazam afresh. */
+    /** The retry button: forget the song and ask Shazam afresh; with no session, a failed start is tried again. */
     public static void retry() {
         Session current = session;
-        if (current != null) current.tracker.retrySoon();
+        if (current != null) {
+            current.tracker.retrySoon();
+            return;
+        }
+        setupFailedAt = 0;
+        publish(new Status(false, WAITING, null, 0));
     }
 
     // --- the audio renderer
@@ -140,7 +154,7 @@ public final class SongRemoval {
 
     private static void filterBroke(String text) {
         Session current = session;
-        if (current != null) current.listener.problem(text);
+        if (current != null) current.problem(text);
         else problem(text);
     }
 
@@ -163,13 +177,13 @@ public final class SongRemoval {
             Log.e(App.TAG, "Song removal failed", t);
             if (state == null) { // the renderer itself can't be read: off for good, told once
                 reflectionFailed = true;
-                problem("Song removal can't read the player's sound (Twitch changed it): " + t);
+                problem("Song removal can't read the player's sound (Twitch changed it): " + Messages.of(t));
                 return buffer;
             }
             synchronized (state) {
                 state.failed = true;
             }
-            problem("Song removal broke, the sound plays unfiltered: " + t);
+            problem("Song removal broke, the sound plays unfiltered: " + Messages.of(t));
             try {
                 synchronized (state) {
                     return delayed(state, buffer, size);
@@ -202,7 +216,8 @@ public final class SongRemoval {
             DebugLog.log("Song removal: audio " + state.rate + " Hz, " + state.channels + " channels"
                     + (state.usable ? "" : " (not filtered)"));
             if (!state.usable && PatchSettings.songRemoval()) {
-                problem("Song removal works on 48 kHz stereo streams only, this one is " + state.rate + " Hz");
+                problem("Song removal works on 48 kHz mono or stereo sound only, this stream's is " + state.rate
+                        + " Hz with " + state.channels + (state.channels == 1 ? " channel" : " channels"));
             }
             return state;
         }
@@ -235,10 +250,10 @@ public final class SongRemoval {
         boolean on = PatchSettings.songRemoval();
         boolean audible = volume(renderer) > 0.001f;
         // Only the stream opened to watch (not a preview on the home or Following page), while it plays with sound.
-        Session current = on && audible && app.morphed.extension.twitch.patches.Watching.active() ? sessionFor(streamKey) : null;
+        Session current = on && audible && Watching.active() ? sessionFor(streamKey) : null;
         if (current != state.feeding) {
             if (current != null) {
-                current.attached(state);
+                current.attached();
                 state.filter.continueAt(current.heard.total());
             }
             state.feeding = current;
@@ -326,13 +341,18 @@ public final class SongRemoval {
             return volumeField.getFloat(renderer);
         } catch (ReflectiveOperationException e) {
             // Without the volume, every player counts as heard: still filtered, previews may be listened to.
+            if (!volumeMissingTold) {
+                volumeMissingTold = true;
+                DebugLog.log("Song removal: PROBLEM the player's volume can't be read (" + Messages.of(e)
+                        + "), muted previews may be listened to");
+            }
             return 1f;
         }
     }
 
     // --- the session that works out the song
 
-    private static final java.util.concurrent.ExecutorService SETUP = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+    private static final ExecutorService SETUP = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "TwitchMorphed-songs-setup");
         thread.setDaemon(true);
         return thread;
@@ -372,7 +392,7 @@ public final class SongRemoval {
             YouTubeClient youtube = new YouTubeClient(web);
             SongLibrary made = new SongLibrary(new File(context.getCacheDir(), "songs"), new SongLibrary.Source() {
                 @Override
-                public java.util.List<String> search(Song song, boolean music) throws SongProblem {
+                public List<String> search(Song song, boolean music) throws SongProblem {
                     return youtube.search(song, music);
                 }
 
@@ -381,13 +401,17 @@ public final class SongRemoval {
                     return youtube.download(videoId, folder);
                 }
             }, new AndroidDecoder());
+            made.onProblem(text -> {
+                DebugLog.log("Song removal: PROBLEM " + text);
+                if (text.startsWith("Songs can't be kept")) toast(text);
+            });
             synchronized (SongRemoval.class) {
                 library = made;
             }
         } catch (Throwable t) {
             Log.e(App.TAG, "Song removal setup failed", t);
             setupFailedAt = System.currentTimeMillis();
-            problem("Song removal couldn't start: " + t);
+            problem("Song removal couldn't start: " + Messages.of(t));
         } finally {
             settingUp = false;
         }
@@ -401,11 +425,17 @@ public final class SongRemoval {
         publish(new Status(false, step, null, 0));
     }
 
+    /** A session that heard nothing for a while ends; the next sound starts a new one. */
+    private static synchronized void idle(Session which) {
+        if (session != which) return;
+        DebugLog.log("Song removal: nothing heard for a few minutes, letting go of " + which.key);
+        stopSession(WAITING);
+    }
+
     private static final class Session implements Tracker.Listener {
         final String key;
         final Heard heard = new Heard();
         final Tracker tracker;
-        final Tracker.Listener listener = this;
         private volatile boolean running = true;
         private boolean filtering;
         private String step = "Listening for music", problem;
@@ -434,18 +464,20 @@ public final class SongRemoval {
                         changedAt = now;
                     }
                     if (now - changedAt < STALE_MS) tracker.look();
+                    else if (now - changedAt > IDLE_MS) idle(this);
                     try {
                         Thread.sleep(200);
                     } catch (InterruptedException e) {
-                        return;
+                        break;
                     }
                 }
+                tracker.release(); // (on this thread: the tracker is only used here) the song's copy is memory
             }, "TwitchMorphed-songs");
             thread.setDaemon(true);
             thread.start();
         }
 
-        void attached(Renderer renderer) {
+        void attached() {
             DebugLog.log("Song removal: following a new player for " + key);
         }
 
@@ -520,7 +552,8 @@ public final class SongRemoval {
         }
         App.onMain(() -> {
             Context context = App.application();
-            if (context != null) Toast.makeText(context, "Song removal: " + text, Toast.LENGTH_LONG).show();
+            String shown = text.startsWith("Song removal") ? text : "Song removal: " + text;
+            if (context != null) Toast.makeText(context, shown, Toast.LENGTH_LONG).show();
         });
     }
 }

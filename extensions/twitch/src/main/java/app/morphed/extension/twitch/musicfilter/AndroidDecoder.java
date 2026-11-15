@@ -153,11 +153,6 @@ public final class AndroidDecoder implements SongLibrary.Decoder {
             if (size + more > data.length) data = java.util.Arrays.copyOf(data, Math.max(size + more, data.length + data.length / 2));
         }
 
-        void add(short value) {
-            if (size == data.length) data = java.util.Arrays.copyOf(data, data.length + data.length / 2);
-            data[size++] = value;
-        }
-
         short[] toArray() {
             return java.util.Arrays.copyOf(data, size);
         }

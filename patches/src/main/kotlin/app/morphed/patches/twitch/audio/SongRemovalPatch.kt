@@ -4,6 +4,7 @@ import app.morphe.patcher.Fingerprint
 import app.morphe.patcher.extensions.InstructionExtensions.addInstruction
 import app.morphe.patcher.extensions.InstructionExtensions.addInstructions
 import app.morphe.patcher.patch.bytecodePatch
+import com.android.tools.smali.dexlib2.AccessFlags
 import app.morphed.patches.twitch.settings.patchSettingsPatch
 import app.morphed.patches.twitch.shared.Constants.COMPATIBILITY_TWITCH
 import app.morphed.patches.twitch.shared.markIncluded
@@ -46,7 +47,17 @@ val songRemovalPatch = bytecodePatch(
         // The sound passes through the filter right before it's written: the buffer written is the filter's
         // (the decoder's own is read-only), and the time it plays at moves by the filter's fixed delay, so the
         // picture stays in step.
+        // What the extension reads of the renderer: checked here, so a changed app fails while patching, not later.
+        val renderer = AudioRenderFingerprint.classDef
+        check(renderer.fields.any { it.name == "format" && it.type == "Landroid/media/MediaFormat;" }) {
+            "$RENDERER has no MediaFormat field 'format'; the patch needs an update"
+        }
+        check(renderer.fields.any { it.name == "volume" && it.type == "F" }) {
+            "$RENDERER has no float field 'volume'; the patch needs an update"
+        }
+
         AudioRenderFingerprint.method.apply {
+            check(!AccessFlags.STATIC.isSet(accessFlags)) { "$RENDERER.render is static; the patch needs an update" }
             val thisRegister = implementation!!.registerCount - 5 // this, buffer, size, presentation time (wide)
             addInstructions(
                 0,

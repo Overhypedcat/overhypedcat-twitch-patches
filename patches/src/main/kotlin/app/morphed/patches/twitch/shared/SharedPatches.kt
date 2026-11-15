@@ -53,5 +53,9 @@ internal fun BytecodePatchContext.markIncluded(feature: String) {
     val included = mutableClassDefBy(INCLUDED_CLASS)
     val method = included.methods.firstOrNull { it.name == feature && it.returnType == "Z" }
         ?: error("$INCLUDED_CLASS has no $feature()")
+    val first = method.implementation?.instructions?.firstOrNull()
+    check(first?.opcode == Opcode.CONST_4 && (first as OneRegisterInstruction).registerA == 0) {
+        "$INCLUDED_CLASS.$feature() doesn't start with const/4 v0; the extension changed"
+    }
     method.replaceInstruction(0, "const/4 v0, 0x1")
 }

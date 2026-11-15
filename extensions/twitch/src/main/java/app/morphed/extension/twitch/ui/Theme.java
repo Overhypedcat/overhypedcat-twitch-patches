@@ -2,14 +2,13 @@ package app.morphed.extension.twitch.ui;
 
 import android.content.Context;
 import android.content.res.Configuration;
-import android.util.TypedValue;
 
 /** Colors and sizes that sit with Twitch's own screens, light or dark. */
 public final class Theme {
     public static final int PURPLE = 0xFF9147FF;
 
     public final boolean dark;
-    public final int background, surface, text, secondary, hairline, trackOff, danger;
+    public final int background, surface, text, secondary, hairline, danger;
     private final float density;
 
     public Theme(Context context) {
@@ -21,7 +20,6 @@ public final class Theme {
         text = dark ? 0xFFEFEFF1 : 0xFF0E0E10;
         secondary = dark ? 0xFFADADB8 : 0xFF53535F;
         hairline = dark ? 0x33FFFFFF : 0x1F000000;
-        trackOff = dark ? 0xFF3A3A3D : 0xFFC8C8CF;
         danger = dark ? 0xFFFF6B6B : 0xFFD4183C;
     }
 
@@ -31,9 +29,5 @@ public final class Theme {
 
     public float dpf(float value) {
         return value * density;
-    }
-
-    public static float sp(Context context, float value) {
-        return TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, value, context.getResources().getDisplayMetrics());
     }
 }

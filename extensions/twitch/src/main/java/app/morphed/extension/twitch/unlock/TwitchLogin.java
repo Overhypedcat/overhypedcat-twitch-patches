@@ -3,9 +3,12 @@ package app.morphed.extension.twitch.unlock;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import android.util.Log;
+
 import java.io.File;
 
 import app.morphed.extension.twitch.App;
+import app.morphed.extension.twitch.patches.DebugLog;
 
 /**
  * The viewer's Twitch login, read where the app keeps it (its own preferences, "authToken_v2"), at the moment
@@ -19,21 +22,25 @@ final class TwitchLogin {
     }
 
     private static volatile String file = USUAL_FILE; // where it was found last
+    private static volatile boolean scanned; // the other files are looked through once a launch (memory)
 
+    /** The token, or null when logged out (or it can't be read: then why is in the debug log). */
     static String token() {
         Context context = App.application();
         if (context == null) return null;
         String token = read(context, file);
-        if (token != null) return token;
+        if (token != null || scanned) return token;
+        scanned = true;
         // Another app version may keep it in another file: look through the app's preference files.
         File folder = new File(context.getApplicationInfo().dataDir, "shared_prefs");
         String[] files = folder.list((dir, name) -> name.endsWith(".xml"));
         if (files == null) return null;
-        for (String file : files) {
-            String name = file.substring(0, file.length() - 4);
+        for (String found : files) {
+            String name = found.substring(0, found.length() - 4);
+            if (name.equals(USUAL_FILE)) continue;
             token = read(context, name);
             if (token != null) {
-                TwitchLogin.file = name;
+                file = name;
                 return token;
             }
         }
@@ -46,6 +53,8 @@ final class TwitchLogin {
             Object value = preferences.getAll().get(KEY);
             return value instanceof String && !((String) value).isEmpty() ? (String) value : null;
         } catch (RuntimeException e) {
+            Log.w(App.TAG, "The Twitch login couldn't be read from " + name, e);
+            DebugLog.log("Quality unlock: the Twitch login couldn't be read from " + name + ": " + e);
             return null;
         }
     }

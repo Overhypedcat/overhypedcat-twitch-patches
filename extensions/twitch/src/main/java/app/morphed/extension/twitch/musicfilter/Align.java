@@ -4,7 +4,7 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Where in a song a stretch of the stream is (a port of Mor's align.py; same thresholds and steps).
+ * Where in a song a stretch of the stream is (a port of Mor Assistant's align.py; same thresholds and steps).
  * <p>
  * The stream is compared with the whole song at every position, at a sixth of the sample rate for speed, then
  * pinned to the exact sample at full rate. A match has to stand far above how alike the stream and the song look

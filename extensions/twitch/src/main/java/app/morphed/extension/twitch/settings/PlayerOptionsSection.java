@@ -3,7 +3,6 @@ package app.morphed.extension.twitch.settings;
 import android.app.Activity;
 import android.content.Context;
 import android.content.res.ColorStateList;
-import android.graphics.Typeface;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.Gravity;
@@ -15,10 +14,9 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.lang.ref.WeakReference;
-
 import app.morphed.extension.twitch.App;
 import app.morphed.extension.twitch.Included;
+import app.morphed.extension.twitch.Messages;
 import app.morphed.extension.twitch.musicfilter.SongRemoval;
 import app.morphed.extension.twitch.patches.DebugLog;
 import app.morphed.extension.twitch.ui.Squircle;
@@ -37,7 +35,6 @@ public final class PlayerOptionsSection {
     private static final Object SECTION_TAG = new Object();
     private static int testIdKey;
     private static boolean failureShown;
-    private static WeakReference<View> lastSection = new WeakReference<>(null);
 
     private PlayerOptionsSection() {
     }
@@ -70,7 +67,6 @@ public final class PlayerOptionsSection {
         View section = build(activity, row);
         section.setTag(SECTION_TAG);
         content.addView(section);
-        lastSection = new WeakReference<>(section);
         place(content, section);
         content.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
             @Override
@@ -122,12 +118,13 @@ public final class PlayerOptionsSection {
 
     public static void failed(Throwable t) {
         Log.e(App.TAG, "Adding the patch switches to the player's Options failed", t);
-        DebugLog.log("PROBLEM Player Options: " + t);
+        DebugLog.log("PROBLEM Player Options: " + Log.getStackTraceString(t));
         if (failureShown) return;
         failureShown = true;
         Context context = App.application();
         if (context != null) {
-            Toast.makeText(context, "The patch switches couldn't be added to the player's Options (Twitch changed it): " + t,
+            Toast.makeText(context, "The patch switches couldn't be added to the player's Options (Twitch changed it): "
+                            + Messages.of(t),
                     Toast.LENGTH_LONG).show();
         }
     }
@@ -151,7 +148,7 @@ public final class PlayerOptionsSection {
 
         if (Included.adBlock()) section.addView(row(activity, theme, side, "Ad blocker", PatchSettings.AD_BLOCK, null));
 
-        TextView songStatus = status(activity, theme, side);
+        TextView songStatus = status(activity, theme);
         TextView retry = new TextView(activity);
         retry.setText("Retry");
         retry.setTextColor(theme.text);
@@ -164,12 +161,14 @@ public final class PlayerOptionsSection {
         LinearLayout retryLine = new LinearLayout(activity);
         retryLine.setPadding(side, 0, side, theme.dp(4));
         retryLine.addView(retry);
+        View songRow = row(activity, theme, side, "Song removal", PatchSettings.SONG_REMOVAL, songStatus);
+        TextView songName = (TextView) ((ViewGroup) ((ViewGroup) songRow).getChildAt(0)).getChildAt(0);
         if (Included.songRemoval()) {
-            section.addView(row(activity, theme, side, "Song removal", PatchSettings.SONG_REMOVAL, songStatus));
+            section.addView(songRow);
             section.addView(retryLine);
         }
 
-        TextView unlockStatus = status(activity, theme, side);
+        TextView unlockStatus = status(activity, theme);
         if (Included.qualityUnlock()) {
             section.addView(row(activity, theme, side, "Quality unlock", PatchSettings.QUALITY_UNLOCK, unlockStatus));
         }
@@ -177,18 +176,19 @@ public final class PlayerOptionsSection {
         Runnable showSong = () -> {
             boolean on = PatchSettings.songRemoval();
             SongRemoval.Status s = SongRemoval.status();
-            String text = !on ? null : s.problem != null ? s.problem
-                    : s.readyIn > 0 && !s.filtering ? s.step + " (Shazam again in " + s.readyIn + " s)" : s.step;
+            // (a past broadcast's switch is its own: switching it on doesn't switch on its channel)
+            songName.setText(PatchSettings.watchingVideo() ? "Song removal for this video" : "Song removal");
+            String text = !on ? null : s.problem != null ? s.problem : s.step;
             show(songStatus, text, on && s.problem != null, theme);
-            retryLine.setVisibility(on && Included.songRemoval() ? View.VISIBLE : View.GONE);
+            // Retry: only when there's a song to forget or a problem to try past
+            boolean retryable = on && Included.songRemoval() && (s.filtering || s.problem != null);
+            retryLine.setVisibility(retryable ? View.VISIBLE : View.GONE);
             relayout(section);
         };
         Runnable showUnlock = () -> {
             boolean on = PatchSettings.qualityUnlock();
             QualityUnlock.Status s = QualityUnlock.status();
-            String text = !on ? null : "Off".equals(s.text) || "On".equals(s.text)
-                    ? (QualityUnlock.servers().names().isEmpty() ? "Add a VPN server in Settings, Patch settings" : null)
-                    : s.text;
+            String text = on ? s.text : null;
             show(unlockStatus, text, on && s.problem, theme);
             relayout(section);
         };
@@ -235,7 +235,7 @@ public final class PlayerOptionsSection {
         });
     }
 
-    private static TextView status(Context context, Theme theme, int side) {
+    private static TextView status(Context context, Theme theme) {
         TextView status = new TextView(context);
         status.setTextSize(14);
         status.setTypeface(TwitchFonts.regular(context));

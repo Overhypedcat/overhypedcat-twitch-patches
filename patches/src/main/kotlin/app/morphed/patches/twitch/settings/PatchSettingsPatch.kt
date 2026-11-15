@@ -7,11 +7,14 @@ import app.morphe.patcher.patch.bytecodePatch
 import app.morphe.patcher.patch.resourcePatch
 import app.morphe.patcher.util.getReference
 import app.morphed.patches.twitch.shared.Constants.COMPATIBILITY_TWITCH
+import com.android.tools.smali.dexlib2.AccessFlags
 import com.android.tools.smali.dexlib2.Opcode
 import com.android.tools.smali.dexlib2.iface.instruction.FiveRegisterInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.NarrowLiteralInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.OneRegisterInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.RegisterRangeInstruction
+import com.android.tools.smali.dexlib2.iface.instruction.TwoRegisterInstruction
+import app.morphe.patcher.util.proxy.mutableTypes.MutableMethod
 import com.android.tools.smali.dexlib2.iface.reference.MethodReference
 
 private const val SCREENS_CLASS = "Lapp/morphed/extension/twitch/ui/Screens;"
@@ -69,6 +72,8 @@ val patchSettingsPatch = bytecodePatch(
             val first = lastCall.startRegister
             val composer = first + 5
             check(lastCall.registerCount == 8) { "Unexpected settings row call in $definingClass->$name" }
+            // The non-range calls below name these registers directly: they must fit in 4 bits.
+            check(first + 5 <= 15) { "Settings rows use registers above v15 in $definingClass->$name; the patch needs an update" }
 
             val instructions = implementation!!.instructions.toList()
             val dividerIndex = (calls.last() + 1 until instructions.size).firstOrNull { index ->
@@ -80,19 +85,21 @@ val patchSettingsPatch = bytecodePatch(
                     reference.parameterTypes[1].toString() == "I"
             } ?: error("No divider after the settings rows in $definingClass->$name")
             val divider = getInstruction(dividerIndex).getReference<MethodReference>()!!
+            checkRegistersFreeAfter(this, dividerIndex, (first..first + 7).filter { it != composer }.toSet())
 
             // The rows' icons: the lock (Security & Privacy) for VPN servers, the sliders (Content Preferences)
             // for Debug mode; each row's icon is the literal loaded into its fourth argument before the call.
             val icons = calls.map { callIndex ->
+                val iconRegister = getInstruction<RegisterRangeInstruction>(callIndex).startRegister + 3
                 (callIndex - 1 downTo maxOf(0, callIndex - 12)).firstNotNullOfOrNull { index ->
                     val instruction = instructions[index]
                     if (instruction is OneRegisterInstruction && instruction is NarrowLiteralInstruction &&
-                        instruction.registerA == first + 3 && instruction.narrowLiteral != 0
+                        instruction.registerA == iconRegister && instruction.narrowLiteral != 0
                     ) instruction.narrowLiteral else null
-                } ?: 0
+                } ?: error("No icon found for settings row ${calls.indexOf(callIndex) + 1} in $definingClass->$name")
             }
-            val vpnIcon = icons.getOrElse(5) { icons.last() }
-            val debugIcon = icons.getOrElse(3) { icons.first() }
+            val vpnIcon = icons[5]
+            val debugIcon = icons[3]
 
             fun rowSmali(id: Int, icon: Int) = """
                 const/16 v${first + 3}, $id
@@ -118,8 +125,42 @@ val patchSettingsPatch = bytecodePatch(
                 """
             )
 
-            // The row handler becomes the app's click type, so the row composable takes it.
+            // The row handler becomes the app's click type, so the row composable takes it. That type must be a
+            // Function0 (invoke() returning an Object), which the handler implements.
+            val clickClass = classDefByOrNull(clickType) ?: error("Click type $clickType not found")
+            val abstractMethods = clickClass.methods.filter { AccessFlags.ABSTRACT.isSet(it.accessFlags) }
+            check(abstractMethods.size == 1 && abstractMethods[0].name == "invoke" &&
+                abstractMethods[0].parameterTypes.isEmpty() && abstractMethods[0].returnType == "Ljava/lang/Object;") {
+                "The settings row's click type $clickType isn't a Function0; the patch needs an update"
+            }
             mutableClassDefBy(ROWS_CLASS).interfaces.add(clickType)
         }
+    }
+}
+
+/**
+ * Fails the patch unless the given registers are written again before anything reads them, along the code that
+ * follows index (up to the first jump): the injected rows overwrite them.
+ */
+private fun checkRegistersFreeAfter(method: MutableMethod, index: Int, registers: Set<Int>) {
+    val instructions = method.implementation!!.instructions.toList()
+    val written = mutableSetOf<Int>()
+    for (i in index + 1 until instructions.size) {
+        val instruction = instructions[i]
+        val reads = when (instruction) {
+            is RegisterRangeInstruction -> (instruction.startRegister until instruction.startRegister + instruction.registerCount).toList()
+            is FiveRegisterInstruction -> listOf(instruction.registerC, instruction.registerD, instruction.registerE,
+                instruction.registerF, instruction.registerG).take(instruction.registerCount)
+            is TwoRegisterInstruction -> listOf(instruction.registerB) +
+                if (instruction.opcode.setsRegister()) emptyList() else listOf(instruction.registerA)
+            is OneRegisterInstruction -> if (instruction.opcode.setsRegister()) emptyList() else listOf(instruction.registerA)
+            else -> emptyList()
+        }
+        reads.firstOrNull { it in registers && it !in written }?.let {
+            error("${method.definingClass}->${method.name} still reads v$it after the settings group; the patch needs an update")
+        }
+        if (instruction is OneRegisterInstruction && instruction.opcode.setsRegister()) written += instruction.registerA
+        if (written.containsAll(registers) || instruction.opcode.name.startsWith("GOTO") ||
+            instruction.opcode.name.startsWith("IF_") || instruction.opcode.name.startsWith("RETURN")) return
     }
 }

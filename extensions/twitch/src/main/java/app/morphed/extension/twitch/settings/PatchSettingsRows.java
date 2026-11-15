@@ -61,7 +61,10 @@ public final class PatchSettingsRows {
         } catch (Throwable t) {
             Log.e(App.TAG, "Settings row failed", t);
             Context context = App.application();
-            if (context != null) Toast.makeText(context, "Couldn't open it: " + t, Toast.LENGTH_LONG).show();
+            if (context != null) {
+                String what = row == VPN ? "VPN servers couldn't be opened: " : "Debug mode couldn't be switched: ";
+                Toast.makeText(context, what + app.morphed.extension.twitch.Messages.of(t), Toast.LENGTH_LONG).show();
+            }
         }
         return unit();
     }

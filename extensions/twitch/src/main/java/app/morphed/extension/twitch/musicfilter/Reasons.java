@@ -22,9 +22,9 @@ public final class Reasons {
 
     public static String of(Throwable error) {
         if (error instanceof SocketTimeoutException) return "no answer in time";
-        if (error instanceof UnknownHostException) return "no connection (" + error.getMessage() + " not found)";
+        if (error instanceof UnknownHostException) return "no internet connection";
         String text = error.getMessage();
-        if (text == null || text.trim().isEmpty()) return error.getClass().getSimpleName();
+        if (text == null || text.trim().isEmpty()) return app.morphed.extension.twitch.Messages.of(error);
         text = text.replaceAll("https?://\\S+", "").replaceAll("\\s+", " ").trim();
         return text.length() > 160 ? text.substring(0, 160) : text;
     }

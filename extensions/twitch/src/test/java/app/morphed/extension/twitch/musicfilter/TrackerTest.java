@@ -183,7 +183,7 @@ public class TrackerTest {
             throw new SongProblem.RateLimited("Shazam is getting too many requests from this connection");
         }, clock, new Budget(clock), events);
         tracker.look();
-        assertEquals("Shazam is getting too many requests from this connection, asking again in 60 s",
+        assertEquals("Shazam is getting too many requests from this connection, asking again in about a minute",
                 events.problems.get(events.problems.size() - 1));
         clock.now += 30;
         tracker.look();
@@ -191,7 +191,7 @@ public class TrackerTest {
         clock.now += 40;
         tracker.look();
         assertEquals(2, asked[0]);
-        assertTrue(events.problems.get(events.problems.size() - 1).endsWith("asking again in 120 s"));
+        assertTrue(events.problems.get(events.problems.size() - 1).endsWith("asking again in about 2 minutes"));
     }
 
     @Test

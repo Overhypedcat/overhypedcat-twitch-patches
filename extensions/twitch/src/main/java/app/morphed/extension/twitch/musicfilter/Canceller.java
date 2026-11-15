@@ -8,7 +8,7 @@ package app.morphed.extension.twitch.musicfilter;
  * shape slowly, and one volume across all frequencies follows quickly. Both learn only from where the song is
  * what's heard. What's left of the song after subtracting is turned down where it still outweighs everything else.
  * <p>
- * A line-for-line port of Mor's canceller (Python reference, and its JavaScript port): the tests check it
+ * A line-for-line port of Mor Assistant's canceller (Python reference, and its JavaScript port): the tests check it
  * against the reference's output sample for sample.
  */
 public class Canceller {

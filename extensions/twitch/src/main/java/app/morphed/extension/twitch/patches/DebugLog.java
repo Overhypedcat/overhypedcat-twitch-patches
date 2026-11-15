@@ -24,9 +24,11 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.text.SimpleDateFormat;
+import java.util.ArrayDeque;
 import java.util.Date;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -74,9 +76,8 @@ public final class DebugLog {
     }
 
     private static final int KEEP_LINES = 400;
-    private static final java.util.ArrayDeque<String> RECENT = new java.util.ArrayDeque<>();
-    private static final java.util.concurrent.CopyOnWriteArrayList<LineListener> LISTENERS =
-            new java.util.concurrent.CopyOnWriteArrayList<>();
+    private static final ArrayDeque<String> RECENT = new ArrayDeque<>();
+    private static final CopyOnWriteArrayList<LineListener> LISTENERS = new CopyOnWriteArrayList<>();
 
     public static boolean isOn() {
         return writer != null;
@@ -126,14 +127,21 @@ public final class DebugLog {
         // The line goes to the file open now; tasks run in order, so it lands before that file's close.
         Writer target = writer;
         if (target == null) return;
-        String line = timestamp() + " [" + Thread.currentThread().getName() + "] " + message + "\n";
+        String time = timestamp();
+        String line = time + " [" + Thread.currentThread().getName() + "] " + message + "\n";
         IO.execute(() -> write(target, line));
-        String shown = timestamp() + " " + message;
+        String shown = time + " " + message;
         synchronized (RECENT) {
             RECENT.addLast(shown);
             while (RECENT.size() > KEEP_LINES) RECENT.removeFirst();
         }
-        for (LineListener listener : LISTENERS) listener.line(shown);
+        for (LineListener listener : LISTENERS) {
+            try {
+                listener.line(shown);
+            } catch (Throwable t) { // logging is called from every thread: a listener's fault mustn't spread
+                Log.e(TAG, "A log listener failed", t);
+            }
+        }
     }
 
     private static void write(Writer target, String line) {
@@ -198,7 +206,7 @@ public final class DebugLog {
         } catch (IOException | RuntimeException e) {
             Log.e(TAG, "Could not create the log file", e);
             preferences(context).edit().putBoolean(KEY_ENABLED, false).apply();
-            tell("The debug log could not be created in Downloads: " + e.getMessage());
+            tell("The debug log couldn't be created in " + folder() + ": " + e.getMessage());
             return;
         }
         log("Log started. Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + "), "
@@ -236,6 +244,12 @@ public final class DebugLog {
         long usedMb = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024);
         log("Status: threads=" + Thread.activeCount() + ", memory=" + usedMb + "/" + runtime.maxMemory() / (1024 * 1024)
                 + "MB, " + RequestStats.summaryAndReset());
+    }
+
+    /** Where the log files go, as the user finds them in a file manager. */
+    public static String folder() {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ? "Downloads"
+                : "Android/data/tv.twitch.android.app/files/Download";
     }
 
     private static OutputStream open(Context context, String name) throws IOException {

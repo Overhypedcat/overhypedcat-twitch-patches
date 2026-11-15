@@ -16,6 +16,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.function.Consumer;
 
 import app.morphed.extension.twitch.net.JsonParser;
 
@@ -55,6 +56,14 @@ public final class SongLibrary implements Tracker.Library {
         readIndex();
     }
 
+    /** Where a failure to keep something goes (the app's log, and the screen for saves); nowhere in tests. */
+    private volatile Consumer<String> problems = text -> { };
+    private boolean saveFailTold;
+
+    void onProblem(Consumer<String> problems) {
+        this.problems = problems;
+    }
+
     private synchronized void readIndex() {
         try {
             if (!indexFile.isFile()) return;
@@ -70,6 +79,8 @@ public final class SongLibrary implements Tracker.Library {
             }
         } catch (IOException | IllegalArgumentException broken) {
             index.clear(); // a broken index: songs are told again by Shazam
+            problems.accept("The list of songs found before couldn't be read (" + broken.getMessage()
+                    + "), songs are looked up afresh");
         }
     }
 
@@ -157,8 +168,8 @@ public final class SongLibrary implements Tracker.Library {
         json.append('}');
         try {
             writeAtomically(indexFile, json.toString().getBytes(StandardCharsets.UTF_8));
-        } catch (IOException ignored) {
-            // the copy still plays; it's searched for again next time
+        } catch (IOException failed) { // the copy still plays; it's searched for again next time
+            saveFailed("the list of songs", failed);
         }
     }
 
@@ -181,6 +192,7 @@ public final class SongLibrary implements Tracker.Library {
         List<Map.Entry<String, String[]>> entries = new ArrayList<>(index.entrySet());
         Collections.reverse(entries);
         for (Map.Entry<String, String[]> entry : entries) {
+            if (found.size() >= Tracker.KNOWN_MAX) break; // (only the latest are looked through)
             String id = entry.getValue()[0];
             File print = new File(root, id + PRINT);
             if (!print.isFile() || print.length() == 0 || path(id) == null) continue;
@@ -205,9 +217,17 @@ public final class SongLibrary implements Tracker.Library {
         bytes.asFloatBuffer().put(print);
         try {
             writeAtomically(new File(root, videoId + PRINT), bytes.array());
-        } catch (IOException ignored) {
-            // without a print the song is told by Shazam next time
+        } catch (IOException failed) { // without a print the song is told by Shazam next time
+            saveFailed("a song's print", failed);
         }
+    }
+
+    /** Told once a launch: storage full means every song is looked up and downloaded again. */
+    private synchronized void saveFailed(String what, IOException failed) {
+        if (saveFailTold) return;
+        saveFailTold = true;
+        problems.accept("Songs can't be kept (saving " + what + " failed: " + failed.getMessage()
+                + "), they're looked up again each time. Is the phone's storage full?");
     }
 
     /** The downloaded copy of this video, if it's here. */
@@ -268,9 +288,4 @@ public final class SongLibrary implements Tracker.Library {
         return newest;
     }
 
-    @SuppressWarnings("unused")
-    static List<String> names(File folder) {
-        String[] names = folder.list();
-        return names == null ? Collections.emptyList() : Arrays.asList(names);
-    }
 }

@@ -15,7 +15,7 @@ import app.morphed.extension.twitch.net.JsonParser;
 import app.morphed.extension.twitch.net.Web;
 
 /**
- * Asks Twitch for a channel's playlist the way Mor does (as streamlink asks): a logged-in access token, then the
+ * Asks Twitch for a channel's playlist the way Mor Assistant does (as streamlink asks): a logged-in access token, then the
  * usher playlist with HEVC allowed, both through the VPN tunnel so Twitch sees the server's country.
  */
 public final class UnlockFetcher {
@@ -65,12 +65,12 @@ public final class UnlockFetcher {
         } catch (IOException e) {
             throw new Failed("Twitch couldn't be reached through the VPN: " + e.getMessage(), false);
         }
-        if (response.status == 404) throw new Failed(channel + " isn't live through the VPN", false);
+        if (response.status == 404) throw new Failed(channel + " isn't live (Twitch said so through the VPN)", false);
         if (response.status == 403) throw new Failed("Twitch refused " + channel + "'s stream through the VPN", false);
         if (!response.ok()) throw new Failed("Twitch answered " + response.status + " through the VPN", false);
         String master = response.text();
         List<String> qualities = qualities(master);
-        if (qualities.isEmpty()) throw new Failed(channel + " isn't live through the VPN", false);
+        if (qualities.isEmpty()) throw new Failed(channel + " isn't live (Twitch said so through the VPN)", false);
         return new Result(master, qualities);
     }
 
@@ -82,7 +82,6 @@ public final class UnlockFetcher {
         }
     }
 
-    /** [token value, signature]. The app's login works with the app's client id; the web one is the fallback. */
     /** Milliseconds left before the deadline; Failed when there's no time for another request. */
     private static int left(long deadline) throws Failed {
         long left = deadline - System.currentTimeMillis();
@@ -90,6 +89,7 @@ public final class UnlockFetcher {
         return (int) left;
     }
 
+    /** [token value, signature]. The app's login works with the app's client id; the web one is the fallback. */
     String[] accessToken(Web web, String channel, String token, long deadline) throws Failed {
         Failed first = null;
         StringBuilder both = new StringBuilder();
@@ -147,7 +147,7 @@ public final class UnlockFetcher {
         if (error != null) throw new Failed("Twitch refused the playlist: " + error, false);
         String value = JsonParser.string(answer, "data", "streamPlaybackAccessToken", "value");
         String signature = JsonParser.string(answer, "data", "streamPlaybackAccessToken", "signature");
-        if (value == null || signature == null) throw new Failed(channel + " isn't live through the VPN", false);
+        if (value == null || signature == null) throw new Failed(channel + " isn't live (Twitch said so through the VPN)", false);
         return new String[]{value, signature};
     }
 

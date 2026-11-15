@@ -35,11 +35,6 @@ public final class Squircle extends Drawable {
         return this;
     }
 
-    public void setColor(int color) {
-        fill.setColor(color);
-        invalidateSelf();
-    }
-
     /** A squircle path in bounds with corner size r (superellipse, exponent 4, per corner). */
     public static Path path(RectF bounds, float r, Path out) {
         out.reset();
@@ -91,7 +86,8 @@ public final class Squircle extends Drawable {
 
     @Override
     public void getOutline(Outline outline) {
-        if (android.os.Build.VERSION.SDK_INT >= 30) outline.setPath(path);
+        // A path outline clips only from Android 13; before, the near-identical rounded rectangle does.
+        if (android.os.Build.VERSION.SDK_INT >= 33) outline.setPath(path);
         else outline.setRoundRect(getBounds(), radius);
     }
 

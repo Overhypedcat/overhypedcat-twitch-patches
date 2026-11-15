@@ -69,6 +69,8 @@ public final class Screens implements Application.ActivityLifecycleCallbacks {
     @Override
     public void onActivityPaused(Activity activity) {
         if (resumed.get() == activity) LogWindow.hide();
+        // Left Settings: its rows aren't on screen, nothing to rebuild (the player's screen must never be).
+        if (settings.get() == activity) settings = new WeakReference<>(null);
     }
 
     private static void watch(Activity activity) {

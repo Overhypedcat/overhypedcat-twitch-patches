@@ -13,6 +13,12 @@ import android.os.SystemClock;
 import android.util.Log;
 import android.widget.Toast;
 
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import app.morphed.extension.twitch.App;
+import app.morphed.extension.twitch.Included;
+import app.morphed.extension.twitch.Messages;
 import app.morphed.extension.twitch.adblock.RequestStats;
 import app.morphed.extension.twitch.musicfilter.SongRemoval;
 import app.morphed.extension.twitch.net.Web;
@@ -24,7 +30,9 @@ import app.morphed.extension.twitch.patches.Watching;
 import app.morphed.extension.twitch.patches.StreamAdsPatch;
 
 /**
- * Wraps the IVS player's HTTP client and lets {@link StreamAdsPatch} rewrite live playlists.
+ * Wraps the IVS player's HTTP client: the one place every player request passes. The ad blocker
+ * ({@link StreamAdsPatch}) rewrites live playlists here, the quality unlock routes an unlocked stream through the
+ * VPN, song removal learns which stream plays, and Debug mode logs the requests.
  * Lives in the IVS package because {@link ReadCallback} and {@link StreamConsumer} are package-private.
  */
 @SuppressWarnings("unused")
@@ -52,7 +60,7 @@ public final class MorphedHttpClient implements HttpClient {
         });
     }
 
-    /** {@code setup} readies the ad blocker; if it fails, the player keeps its own client. */
+    /** {@code setup} readies the patches; if it fails, the player keeps its own client. */
     static HttpClient wrap(HttpClient client, Runnable setup) {
         if (client == null || client instanceof MorphedHttpClient) return client;
         try {
@@ -60,18 +68,18 @@ public final class MorphedHttpClient implements HttpClient {
             DebugLog.log("Player HTTP client created: " + client.description());
             return new MorphedHttpClient(client);
         } catch (Throwable t) {
-            // Setting up the ad blocker failed: the player keeps its own client so video still plays.
+            // Setting up failed: the player keeps its own client so video still plays (without the patches).
             reportSetupFailure(t);
             return client;
         }
     }
 
     /**
-     * Tells the user that stream ads are not blocked. The failure can be StreamAdsPatch's own setup,
+     * Tells the user the patches on the player don't work. The failure can be StreamAdsPatch's own setup,
      * so its error reporting cannot be relied on: then a message is shown directly.
      */
     private static void reportSetupFailure(Throwable t) {
-        Log.e("TwitchMorphed", "Ad blocker setup failed", t);
+        Log.e(App.TAG, "Player setup failed", t);
         try {
             StreamAdsPatch.setupFailed(t);
             return;
@@ -82,16 +90,24 @@ public final class MorphedHttpClient implements HttpClient {
         setupFailureShown = true;
         new Handler(Looper.getMainLooper()).post(() -> {
             try {
-                Context context = (Context) Class.forName("android.app.ActivityThread")
-                        .getMethod("currentApplication").invoke(null);
+                Context context = App.application();
                 if (context != null) {
-                    Toast.makeText(context, "Ad blocker needs an update (E3)\nSetup failed, ads may play\n" + t,
-                            Toast.LENGTH_LONG).show();
+                    Toast.makeText(context, "Twitch Morphed needs an update (E3): " + lost()
+                            + " on the player\n" + Messages.of(t), Toast.LENGTH_LONG).show();
                 }
             } catch (Throwable shown) {
-                Log.e("TwitchMorphed", "Could not show the setup failure", shown);
+                Log.e(App.TAG, "Couldn't show the setup failure", shown);
             }
         });
+    }
+
+    /** What stops working when the player can't be hooked: the parts included in this build. */
+    private static String lost() {
+        StringBuilder parts = new StringBuilder();
+        if (Included.adBlock()) parts.append("ads may play");
+        if (Included.songRemoval()) parts.append(parts.length() > 0 ? ", " : "").append("song removal is off");
+        if (Included.qualityUnlock()) parts.append(parts.length() > 0 ? ", " : "").append("the quality unlock is off");
+        return parts.length() > 0 ? parts.toString() : "the patches don't work";
     }
 
     @Override
@@ -117,15 +133,15 @@ public final class MorphedHttpClient implements HttpClient {
             EXECUTOR.execute(() -> viaTunnel(request, callback, url, start));
             return;
         }
-        boolean unlock = channel != null && !preview && app.morphed.extension.twitch.Included.qualityUnlock()
+        boolean unlock = channel != null && !preview && Included.qualityUnlock()
                 && PatchSettings.qualityUnlock();
-        direct(request, callback, url, start, unlock, StreamAdsPatch.shouldInspect(url), !preview && isStreamList(url));
+        direct(request, callback, url, start, unlock, StreamAdsPatch.shouldInspect(url), !preview && isStreamList(url, channel));
     }
 
     /** A stream's playlist list (live or a past broadcast): the one opened to watch, unless it's a preview's. */
-    private static boolean isStreamList(String url) {
+    private static boolean isStreamList(String url, String channel) {
         return url.contains("usher.ttvnw.net") && url.contains(".m3u8")
-                && (QualityUnlock.channelOf(url) != null || url.contains("/vod/"));
+                && (channel != null || url.contains("/vod/"));
     }
 
     /** A request over the normal connection, its playlist unlocked and ad-blocked as needed. */
@@ -168,7 +184,7 @@ public final class MorphedHttpClient implements HttpClient {
         });
     }
 
-    private static final java.util.regex.Pattern VOD = java.util.regex.Pattern.compile("usher\\.ttvnw\\.net/vod/(?:v2/)?(\\d+)");
+    private static final Pattern VOD = Pattern.compile("usher\\.ttvnw\\.net/vod/(?:v2/)?(\\d+)");
 
     /** Tells song removal which stream plays: a channel, or a past broadcast. */
     static void noteStream(String url, String channel) {
@@ -176,11 +192,11 @@ public final class MorphedHttpClient implements HttpClient {
             if (channel != null) {
                 SongRemoval.stream("channel:" + channel);
             } else if (url.contains("usher.ttvnw.net/vod/")) {
-                java.util.regex.Matcher vod = VOD.matcher(url);
+                Matcher vod = VOD.matcher(url);
                 if (vod.find()) SongRemoval.stream("vod:" + vod.group(1));
             }
         } catch (Throwable t) {
-            Log.e("TwitchMorphed", "Noting the stream failed", t);
+            Log.e(App.TAG, "Noting the stream failed", t);
         }
     }
 
@@ -199,9 +215,9 @@ public final class MorphedHttpClient implements HttpClient {
         try {
             viaTunnelOrFail(request, callback, url, start);
         } catch (Throwable t) { // never leave the player waiting for its timeout
-            Log.e("TwitchMorphed", "A tunneled request failed", t);
+            Log.e(App.TAG, "A tunneled request failed", t);
             try {
-                if (!request.isCancelled()) tunnelFallback(request, callback, url, start, t.toString());
+                if (!request.isCancelled()) tunnelFallback(request, callback, url, start, Messages.of(t));
             } catch (Throwable again) {
                 callback.onError(t instanceof Exception ? (Exception) t : new RuntimeException(t));
             }
@@ -211,7 +227,7 @@ public final class MorphedHttpClient implements HttpClient {
     private void viaTunnelOrFail(Request request, ResponseCallback callback, String url, long start) {
         Web web = QualityUnlock.tunnelWeb();
         if (web == null) {
-            tunnelFallback(request, callback, url, start, "the tunnel is down");
+            tunnelFallback(request, callback, url, start, "the VPN isn't connected");
             return;
         }
         if (request.isCancelled()) return;
@@ -220,7 +236,7 @@ public final class MorphedHttpClient implements HttpClient {
             // IVS gives its timeout in seconds.
             answer = web.send(Web.Request.get(url).timeout(Math.max(5000, request.getTimeout() * 1000)));
         } catch (Exception e) {
-            tunnelFallback(request, callback, url, start, String.valueOf(e.getMessage()));
+            tunnelFallback(request, callback, url, start, Messages.of(e));
             return;
         }
         byte[] body = answer.body;
@@ -228,7 +244,7 @@ public final class MorphedHttpClient implements HttpClient {
         boolean playlist = url.contains(".m3u8");
         if (playlist && answer.ok()) {
             String text = new String(body, StandardCharsets.UTF_8);
-            QualityUnlock.learnHosts(text);
+            QualityUnlock.learnAddresses(text);
             if (StreamAdsPatch.shouldInspect(url)) {
                 String rewritten = StreamAdsPatch.process(url, text);
                 if (rewritten != null && !rewritten.equals(text)) body = rewritten.getBytes(StandardCharsets.UTF_8);
@@ -247,7 +263,7 @@ public final class MorphedHttpClient implements HttpClient {
                 response.setConsumer(null, new BytesConsumer(request, body));
                 callback.onResponse(response);
             } catch (Throwable t) {
-                Log.e("TwitchMorphed", "Answering a tunneled request failed", t);
+                Log.e(App.TAG, "Answering a tunneled request failed", t);
                 callback.onError(t instanceof Exception ? (Exception) t : new RuntimeException(t));
                 return;
             }
@@ -286,7 +302,7 @@ public final class MorphedHttpClient implements HttpClient {
                 StreamAdsPatch.deliveryFailed(url, t);
             } catch (Throwable reportFailed) {
                 // The playlist must still be answered below, or the player waits for its timeout.
-                Log.e("TwitchMorphed", "Playlist processing failed for " + url, t);
+                Log.e(App.TAG, "Playlist processing failed for " + url, t);
             }
         }
         // Same rule as IVS's own callbacks: the native side is only called under the request lock and
@@ -309,7 +325,7 @@ public final class MorphedHttpClient implements HttpClient {
                 try {
                     StreamAdsPatch.deliveryFailed(url, t);
                 } catch (Throwable reportFailed) {
-                    Log.e("TwitchMorphed", "Playlist delivery failed for " + url, t);
+                    Log.e(App.TAG, "Playlist delivery failed for " + url, t);
                 }
                 if (!answered) callback.onError(t instanceof Exception ? (Exception) t : new RuntimeException(t));
                 return;
@@ -341,7 +357,7 @@ public final class MorphedHttpClient implements HttpClient {
         };
     }
 
-    /** One player request in the detailed log; the time is until the response headers arrived. */
+    /** One player request in the debug log; the time is until the response headers arrived. */
     private static void logRequest(String url, long start, int status, Exception error) {
         if (!DebugLog.isOn()) return;
         long ms = SystemClock.elapsedRealtime() - start;

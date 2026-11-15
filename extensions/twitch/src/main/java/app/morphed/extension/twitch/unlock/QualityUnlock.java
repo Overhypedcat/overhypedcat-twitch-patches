@@ -4,10 +4,10 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 import java.io.File;
-import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -20,6 +20,8 @@ import java.util.regex.Pattern;
 
 import app.morphed.extension.twitch.App;
 import app.morphed.extension.twitch.Included;
+import app.morphed.extension.twitch.Messages;
+import app.morphed.extension.twitch.hls.UrlKey;
 import app.morphed.extension.twitch.net.Web;
 import app.morphed.extension.twitch.patches.DebugLog;
 import app.morphed.extension.twitch.settings.PatchSettings;
@@ -27,14 +29,15 @@ import app.morphed.extension.twitch.vpn.VpnTunnel;
 import app.morphed.extension.twitch.vpn.WgConfig;
 
 /**
- * The quality unlock, the way Mor does it: Twitch offers Enhanced Broadcasting's higher qualities (1440p) only to
+ * The quality unlock, the way Mor Assistant does it: Twitch offers Enhanced Broadcasting's higher qualities (1440p) only to
  * logged-in viewers in some countries who can play HEVC. When a stream starts, its playlist is also asked for
  * through the user's WireGuard VPN; when that one offers more, the player gets it, and that stream's video then
  * comes through the same tunnel. Nothing else in the app goes through it.
  * <p>
- * Each stream is decided once, on its first playlist request: later requests for it (the ad blocker's reloads,
- * the mini player, picture in picture) follow that decision without asking again. A server that didn't answer is
- * left alone for a while, so streams don't each wait for it. An idle tunnel is closed.
+ * Each stream is decided once, on its first playlist request: when nothing is locked, later requests for it (the
+ * ad blocker's reloads, the mini player, picture in picture) go straight on; an unlocked stream keeps getting its
+ * playlist through the VPN. A server that didn't answer is left alone for a while, so streams don't each wait for
+ * it. An idle tunnel is closed.
  */
 public final class QualityUnlock {
     static final int TUNNEL_TIMEOUT_MS = 5_000;
@@ -43,9 +46,11 @@ public final class QualityUnlock {
     static final long IDLE_CLOSE_MS = 5 * 60_000; // a tunnel nothing went through this long is closed
     private static final Pattern CHANNEL = Pattern.compile("/api/v2/channel/hls/([^/.?]+)\\.m3u8|/api/channel/hls/([^/.?]+)\\.m3u8");
 
+    static final String ADD_SERVER = "Add a VPN server in Settings, Patch settings";
+
     /** What the unlock did for the stream being watched, for the player's Options. */
     public static final class Status {
-        public final String text;
+        public final String text; // null: nothing to say (off, or on and waiting for a stream)
         public final boolean problem;
 
         Status(String text, boolean problem) {
@@ -54,20 +59,18 @@ public final class QualityUnlock {
         }
     }
 
+    /** The status while no stream was decided yet: the one thing missing, or nothing. */
+    static Status idle() {
+        boolean none = servers().names().isEmpty();
+        return new Status(none ? ADD_SERVER : null, none);
+    }
+
     public interface StatusListener {
         void changed(Status status);
     }
 
-    /** A stream's decision. */
-    static final class Decision {
-        final boolean viaVpn;
-
-        Decision(boolean viaVpn) {
-            this.viaVpn = viaVpn;
-        }
-    }
-
-    private static final Map<String, Decision> DECIDED = new ConcurrentHashMap<>();
+    /** Each stream's decision: true when it plays through the VPN. */
+    private static final Map<String, Boolean> DECIDED = new ConcurrentHashMap<>();
     private static final Set<String> TUNNEL_ADDRESSES = Collections.newSetFromMap(new ConcurrentHashMap<>());
     private static final CopyOnWriteArrayList<StatusListener> LISTENERS = new CopyOnWriteArrayList<>();
     private static final UnlockFetcher FETCHER = new UnlockFetcher();
@@ -83,7 +86,7 @@ public final class QualityUnlock {
     private static volatile long lastUsedAt;
     private static volatile long serversFailedAt;
     private static volatile String serversFailure;
-    private static volatile Status status = new Status("Off", false);
+    private static volatile Status status = new Status(null, false);
     private static volatile VpnServers servers;
 
     static {
@@ -93,10 +96,10 @@ public final class QualityUnlock {
                 DECIDED.clear();
                 TUNNEL_ADDRESSES.clear();
                 BACKGROUND.execute(QualityUnlock::closeTunnel); // (closing sends packets: never on the main thread)
-                publish(new Status("Off", false));
+                publish(new Status(null, false));
             } else {
                 serversFailedAt = 0;
-                publish(new Status(servers().names().isEmpty() ? "Add a VPN server in Settings, Patch settings" : "On", false));
+                publish(idle());
             }
         });
         BACKGROUND.scheduleWithFixedDelay(QualityUnlock::tidy, 1, 1, TimeUnit.MINUTES);
@@ -141,7 +144,7 @@ public final class QualityUnlock {
         Matcher matcher = CHANNEL.matcher(url);
         if (!matcher.find()) return null;
         String channel = matcher.group(1) != null ? matcher.group(1) : matcher.group(2);
-        return channel.toLowerCase(java.util.Locale.ROOT);
+        return channel.toLowerCase(Locale.ROOT);
     }
 
     /**
@@ -151,20 +154,12 @@ public final class QualityUnlock {
     public static boolean routes(String url) {
         if (TUNNEL_ADDRESSES.isEmpty() || !Included.qualityUnlock() || !PatchSettings.qualityUnlock()
                 || url.contains("usher.ttvnw.net")) return false;
-        return TUNNEL_ADDRESSES.contains(app.morphed.extension.twitch.hls.UrlKey.of(url));
-    }
-
-    static String host(String url) {
-        try {
-            return new URL(url).getHost();
-        } catch (java.net.MalformedURLException e) {
-            return null;
-        }
+        return TUNNEL_ADDRESSES.contains(UrlKey.of(url));
     }
 
     /** Whether this address is one of the unlocked stream's (for tests: routes() also asks the switches). */
     static boolean knows(String url) {
-        return TUNNEL_ADDRESSES.contains(app.morphed.extension.twitch.hls.UrlKey.of(url));
+        return TUNNEL_ADDRESSES.contains(UrlKey.of(url));
     }
 
     /** The tunnel's HTTP client for routed requests, or null when the tunnel is down. */
@@ -178,19 +173,20 @@ public final class QualityUnlock {
 
     /** The tunnel failed a routed request: the stream goes on over the normal connection, and that is told. */
     public static void tunnelFailed(String why) {
-        if (!status.problem) publish(new Status("The VPN stopped answering (" + why + "), the stream plays without the unlock", true));
+        if (!status.problem) publish(new Status("The VPN stopped answering, the stream plays without the unlock", true));
+        DebugLog.log("Quality unlock: the VPN failed a request: " + why);
     }
 
     private static final Pattern ADDRESS = Pattern.compile("https?://[^\\s\"]+");
     private static final int MAX_ADDRESSES = 4000;
 
     /** The addresses a playlist from the tunnel names (playlists, video pieces): they go through the tunnel too. */
-    public static void learnHosts(String playlist) {
+    public static void learnAddresses(String playlist) {
         if (TUNNEL_ADDRESSES.size() > MAX_ADDRESSES) TUNNEL_ADDRESSES.clear(); // old pieces; the current ones come again
         Matcher address = ADDRESS.matcher(playlist);
         while (address.find()) {
             String url = address.group();
-            if (!url.contains("usher.")) TUNNEL_ADDRESSES.add(app.morphed.extension.twitch.hls.UrlKey.of(url));
+            if (!url.contains("usher.")) TUNNEL_ADDRESSES.add(UrlKey.of(url));
         }
     }
 
@@ -205,7 +201,8 @@ public final class QualityUnlock {
             try {
                 return decide(channel, direct);
             } catch (Throwable t) {
-                publish(new Status("The quality unlock ran into an error: " + t, true));
+                DebugLog.log("Quality unlock: error: " + android.util.Log.getStackTraceString(t));
+                publish(new Status("The quality unlock ran into an error: " + Messages.of(t), true));
                 return direct;
             }
         }
@@ -217,13 +214,12 @@ public final class QualityUnlock {
             TUNNEL_ADDRESSES.clear();
             for (String decided : new ArrayList<>(DECIDED.keySet())) if (!decided.equals(channel)) DECIDED.remove(decided);
         }
-        Decision decision = DECIDED.get(channel);
-        if (decision != null && !decision.viaVpn) return direct;
+        Boolean decision = DECIDED.get(channel);
+        if (decision != null && !decision) return direct;
         long now = System.currentTimeMillis();
         if (decision == null && now - serversFailedAt < FAILED_SERVERS_REST_MS) {
-            long wait = (FAILED_SERVERS_REST_MS - (now - serversFailedAt) + 999) / 1000;
-            DECIDED.put(channel, new Decision(false));
-            publish(new Status(serversFailure + ", trying again in " + wait + " s", true));
+            DECIDED.put(channel, false);
+            publish(new Status(serversFailure + ". Trying again in a few minutes", true));
             return direct;
         }
         String token = TwitchLogin.token();
@@ -234,8 +230,7 @@ public final class QualityUnlock {
         List<String> problems = new ArrayList<>();
         List<WgConfig> configs = servers().configs(problems);
         if (configs.isEmpty()) {
-            publish(new Status(problems.isEmpty() ? "Add a VPN server in Settings, Patch settings"
-                    : "No usable VPN server: " + problems.get(0), true));
+            publish(new Status(problems.isEmpty() ? ADD_SERVER : "No usable VPN server: " + problems.get(0), true));
             return direct;
         }
         long deadline = now + WAIT_MS;
@@ -245,9 +240,11 @@ public final class QualityUnlock {
         for (WgConfig config : ordered(configs)) {
             int left = (int) (deadline - System.currentTimeMillis());
             if (left < 1500) break;
-            VpnTunnel up = ensureTunnel(config, Math.min(TUNNEL_TIMEOUT_MS, left));
-            if (up == null) {
-                if (failure == null) failure = "Couldn't connect to " + config.name;
+            VpnTunnel up;
+            try {
+                up = ensureTunnel(config, Math.min(TUNNEL_TIMEOUT_MS, left));
+            } catch (Exception e) { // the server's own reason (keys refused, name not found, no answer)
+                if (failure == null) failure = "Couldn't connect to " + config.name + ": " + Messages.of(e);
                 continue;
             }
             anyAnswered = true;
@@ -255,31 +252,36 @@ public final class QualityUnlock {
                 result = FETCHER.fetch(up.web(), channel, token, (int) Math.max(500, deadline - System.currentTimeMillis()));
                 break;
             } catch (UnlockFetcher.Failed failed) {
+                if (failed.login) { // the login, not the server: no point trying the others
+                    DebugLog.log("Quality unlock: Twitch refused the login: " + failed.getMessage());
+                    failure = "Twitch didn't accept your login, log out and in again";
+                    break;
+                }
                 failure = failed.getMessage();
-                if (failed.login) break; // the login, not the server: no point trying the others
             }
         }
         if (result == null) {
-            DECIDED.put(channel, new Decision(false));
+            DECIDED.put(channel, false);
+            String why = failure != null ? failure : "No VPN server answered in time";
             if (!anyAnswered) { // no server came up: the next streams start at once instead of waiting again
                 serversFailedAt = System.currentTimeMillis();
-                serversFailure = failure != null ? failure : "No VPN server answered";
+                serversFailure = why;
             }
-            publish(new Status(failure != null ? failure : "No VPN server answered in time", true));
+            publish(new Status(why, true));
             return direct;
         }
         lastUsedAt = System.currentTimeMillis();
         List<String> extra = UnlockFetcher.unlockedOnly(UnlockFetcher.qualities(direct), result.qualities);
         if (extra.isEmpty()) {
-            DECIDED.put(channel, new Decision(false));
-            publish(new Status("Nothing locked on " + channel + "'s stream", false));
+            DECIDED.put(channel, false);
+            publish(new Status(channel + "'s stream has no higher quality to unlock", false));
             return direct;
         }
         VpnTunnel current = tunnel;
-        String server = current != null ? current.config.name : "";
-        DECIDED.put(channel, new Decision(true));
-        learnHosts(result.master);
-        publish(new Status("Unlocked " + String.join(", ", extra) + " through " + server, false));
+        DECIDED.put(channel, true);
+        learnAddresses(result.master);
+        publish(new Status("Unlocked " + String.join(", ", extra)
+                + (current != null ? " through " + current.config.name : ""), false));
         return result.master;
     }
 
@@ -294,8 +296,8 @@ public final class QualityUnlock {
         return out;
     }
 
-    /** The tunnel to this server, connected when needed (outside any lock: it takes seconds). */
-    private static VpnTunnel ensureTunnel(WgConfig config, int timeoutMs) {
+    /** The tunnel to this server, connected when needed (outside any lock: it takes seconds); why not, if not. */
+    private static VpnTunnel ensureTunnel(WgConfig config, int timeoutMs) throws Exception {
         VpnTunnel current = tunnel;
         if (current != null && current.isUp() && current.config.name.equals(config.name)) return current;
         closeTunnel();
@@ -308,7 +310,7 @@ public final class QualityUnlock {
             return opened;
         } catch (Exception e) {
             DebugLog.log("Quality unlock: " + config.name + " failed: " + e.getMessage());
-            return null;
+            throw e;
         }
     }
 
@@ -331,7 +333,7 @@ public final class QualityUnlock {
                 closeTunnel();
                 TUNNEL_ADDRESSES.clear();
                 // Only the streams that went through it are decided again; "nothing locked" stays decided.
-                DECIDED.values().removeIf(decision -> decision.viaVpn);
+                DECIDED.values().removeIf(viaVpn -> viaVpn);
             } else {
                 current.tidy();
             }
@@ -340,9 +342,19 @@ public final class QualityUnlock {
         }
     }
 
-    /** A server was added: the unlock is switched on the first time there is one; a rest after failures ends. */
-    public static void serverAdded() {
+    /**
+     * A server was added (or replaced): the unlock is switched on the first time there is one, a rest after
+     * failures ends, and a tunnel up with the old keys of a replaced one is closed.
+     */
+    public static void serverAdded(String name) {
         serversFailedAt = 0;
+        VpnTunnel up = tunnel;
+        if (up != null && up.config.name.equals(name)) {
+            TUNNEL_ADDRESSES.clear();
+            DECIDED.clear();
+            BACKGROUND.execute(QualityUnlock::closeTunnel);
+        }
+        if (!status.problem || ADD_SERVER.equals(status.text)) publish(idle());
         Context context = App.application();
         if (context == null) return;
         SharedPreferences preferences = PatchSettings.preferences(context);
@@ -357,5 +369,6 @@ public final class QualityUnlock {
             DECIDED.clear();
             BACKGROUND.execute(QualityUnlock::closeTunnel);
         }
+        if (servers().names().isEmpty()) publish(idle()); // the last one gone: say what's missing
     }
 }

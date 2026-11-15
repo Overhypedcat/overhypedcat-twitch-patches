@@ -88,7 +88,7 @@ public class UnlockTest {
             new UnlockFetcher().fetch(web, "sleepy", "t", 5000);
             fail();
         } catch (UnlockFetcher.Failed failed) {
-            assertEquals("sleepy isn't live through the VPN", failed.getMessage());
+            assertEquals("sleepy isn't live (Twitch said so through the VPN)", failed.getMessage());
         }
     }
 
@@ -98,7 +98,7 @@ public class UnlockTest {
 
     @Test
     public void onlyTheUnlockedStreamsOwnAddressesGoThroughTheTunnel() {
-        QualityUnlock.learnHosts(UNLOCKED + "#EXT-X-PREFETCH:https://edge-1.abs.hls.ttvnw.net/v1/segment/S9.ts\n"
+        QualityUnlock.learnAddresses(UNLOCKED + "#EXT-X-PREFETCH:https://edge-1.abs.hls.ttvnw.net/v1/segment/S9.ts\n"
                 + "https://edge-1.abs.hls.ttvnw.net/v1/segment/S8.ts?x=1\n");
         assertTrue(QualityUnlock.knows("https://b.playlist.ttvnw.net/v1/1440.m3u8?p=2"));
         assertTrue(QualityUnlock.knows("https://edge-1.abs.hls.ttvnw.net/v1/segment/S8.ts"));

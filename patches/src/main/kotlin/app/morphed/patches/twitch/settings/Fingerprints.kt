@@ -39,12 +39,14 @@ internal fun settingsRowCalls(method: Method): List<Int> {
 
 /**
  * The Settings page's account group (Account, Preferences, Notifications, Content Preferences, Family Center,
- * Security & Privacy, Connections), built with the row composable seven times and closed with a divider. Jetpack
+ * Security & Privacy, Connections), built with the row composable (seven times in 31.8.0; a row more or less is
+ * still found) and closed with a divider. The group above it has six rows. Jetpack
  * Compose: the names are obfuscated, so it's found by that shape.
  */
 object SettingsAccountGroupFingerprint : Fingerprint(
     returnType = "V",
     custom = { method, _ ->
-        method.parameterTypes.firstOrNull()?.toString() == "Z" && settingsRowCalls(method).size == 7
+        method.parameterTypes.firstOrNull()?.toString() == "Z" && settingsRowCalls(method).size in 7..9 &&
+            method.parameterTypes.size >= 8
     },
 )

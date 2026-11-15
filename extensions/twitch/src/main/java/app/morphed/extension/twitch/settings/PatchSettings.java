@@ -2,7 +2,10 @@ package app.morphed.extension.twitch.settings;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.util.Log;
 
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import app.morphed.extension.twitch.App;
@@ -15,8 +18,8 @@ public final class PatchSettings {
     public static final String PREFERENCES = "twitch_morphed";
     public static final String AD_BLOCK = "ad_block";
     public static final String SONG_REMOVAL = "song_removal";
-    /** The streams song removal is on for (as Mor: off until switched on, per channel). */
-    static final String SONG_REMOVAL_STREAMS = "song_removal_channels";
+    /** The streams song removal is on for: off until switched on, per channel (a past broadcast on its own). */
+    static final String SONG_REMOVAL_STREAMS = "song_removal_streams";
     public static final String QUALITY_UNLOCK = "quality_unlock";
 
     public interface Listener {
@@ -25,7 +28,7 @@ public final class PatchSettings {
 
     private static volatile boolean loaded;
     private static volatile boolean adBlock = true;
-    private static volatile java.util.Set<String> songStreams = new java.util.HashSet<>(); // copied on change
+    private static volatile Set<String> songStreams = new HashSet<>(); // copied on change
     private static volatile String watching; // the stream being watched: "channel:name" or "vod:id"
     private static volatile boolean qualityUnlock = false; // on once a VPN server is added
     private static final CopyOnWriteArrayList<Listener> LISTENERS = new CopyOnWriteArrayList<>();
@@ -41,8 +44,8 @@ public final class PatchSettings {
             if (context == null) return; // too early: defaults until the app is there
             SharedPreferences preferences = preferences(context);
             adBlock = preferences.getBoolean(AD_BLOCK, true);
-            java.util.Set<String> saved = preferences.getStringSet(SONG_REMOVAL_STREAMS, null);
-            if (saved != null) songStreams = new java.util.HashSet<>(saved);
+            Set<String> saved = preferences.getStringSet(SONG_REMOVAL_STREAMS, null);
+            if (saved != null) songStreams = new HashSet<>(saved);
             qualityUnlock = preferences.getBoolean(QUALITY_UNLOCK, false);
             loaded = true;
         }
@@ -76,6 +79,12 @@ public final class PatchSettings {
         if (now != before) tell(SONG_REMOVAL, now);
     }
 
+    /** Whether a past broadcast is being watched (its song removal switch is its own, not its channel's). */
+    public static boolean watchingVideo() {
+        String stream = watching;
+        return stream != null && stream.startsWith("vod:");
+    }
+
     public static boolean qualityUnlock() {
         load();
         return qualityUnlock;
@@ -96,8 +105,12 @@ public final class PatchSettings {
             case AD_BLOCK: adBlock = on; break;
             case SONG_REMOVAL: {
                 String stream = watching;
-                if (stream == null) return; // no stream to switch it for
-                java.util.Set<String> next = new java.util.HashSet<>(songStreams);
+                if (stream == null) { // no stream to switch it for: the switch goes back
+                    Log.w(App.TAG, "Song removal switched with no stream playing");
+                    tell(key, false);
+                    return;
+                }
+                Set<String> next = new HashSet<>(songStreams);
                 if (on) next.add(stream);
                 else next.remove(stream);
                 songStreams = next;
@@ -119,7 +132,7 @@ public final class PatchSettings {
             try {
                 listener.changed(key, on);
             } catch (Throwable t) { // one listener's failure mustn't stop the switch or crash the tap
-                android.util.Log.e(App.TAG, "A settings listener failed", t);
+                Log.e(App.TAG, "A settings listener failed", t);
             }
         }
     }
@@ -136,7 +149,7 @@ public final class PatchSettings {
     static void setForTest(boolean block, boolean unlock) {
         adBlock = block;
         qualityUnlock = unlock;
-        songStreams = new java.util.HashSet<>();
+        songStreams = new HashSet<>();
         watching = null;
         loaded = true;
     }

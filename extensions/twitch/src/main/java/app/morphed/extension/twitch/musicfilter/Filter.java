@@ -6,7 +6,7 @@ import static app.morphed.extension.twitch.musicfilter.Canceller.HOP;
 /**
  * The stream's sound in, the same with the song taken out; DELAY samples behind. {@link #wanted} is the song the
  * tracker says plays now (or null); every sample taken in also goes to the heard listener (mono), for the tracker.
- * A port of Mor's Filter: once anything in it fails, the sound goes through unfiltered from then on, still DELAY
+ * A port of Mor Assistant's Filter: once anything in it fails, the sound goes through unfiltered from then on, still DELAY
  * behind so it stays in step with the picture, and the failure is told once.
  */
 public final class Filter {
@@ -48,10 +48,6 @@ public final class Filter {
         this.onProblem = onProblem;
     }
 
-    public boolean isBroken() {
-        return broken;
-    }
-
     /** The stream sample the next one taken in is: lines this filter up with the tracker's count of what it heard. */
     public void continueAt(long sample) {
         fed = sample - pendingLength;
@@ -85,7 +81,7 @@ public final class Filter {
                 } catch (Throwable error) { // the filter must never stop the sound: from now on it goes through
                     broken = true;
                     onProblem.problem("Song removal broke, the sound plays unfiltered: "
-                            + error.getClass().getSimpleName() + ": " + error.getMessage());
+                            + app.morphed.extension.twitch.Messages.of(error));
                 }
             }
             if (result == null) result = delayed; // still DELAY behind

@@ -46,13 +46,49 @@ public final class Readable {
         if (status.matches()) {
             return "Running, " + status.group(2) + " of " + status.group(3) + " MB memory used, " + shorten(status.group(4));
         }
-        return shorten(text);
+        String plain = reword(text);
+        return plain == null ? null : shorten(plain);
+    }
+
+    private static final Pattern[] ROUTINE = {
+            Pattern.compile("^Player HTTP client created.*"),
+            Pattern.compile("^Player \\d+ created, \\d+ alive$")};
+    private static final Pattern STREAM = Pattern.compile("(channel|vod):(\\S+)");
+    private static final Pattern COPY = Pattern.compile(
+            "^Song removal: Copy \\S+ ready: got it in (\\d+) ms, prepared in (\\d+) ms$");
+    private static final Pattern DIRECT = Pattern.compile("^Quality unlock: \\S+ goes direct \\((.*)\\)$");
+    private static final Pattern WATCHING = Pattern.compile("^Watching (\\S+) as [^:]+:.*$");
+
+    /** The patches' own technical lines in plain words; null for the ones only the file needs. */
+    static String reword(String text) {
+        for (Pattern routine : ROUTINE) if (routine.matcher(text).matches()) return null;
+        Matcher copy = COPY.matcher(text);
+        if (copy.matches()) {
+            return String.format(java.util.Locale.US, "Song removal: the song's copy is ready (%.1f s to get it, %.1f s to prepare it)",
+                    Integer.parseInt(copy.group(1)) / 1000.0, Integer.parseInt(copy.group(2)) / 1000.0);
+        }
+        Matcher direct = DIRECT.matcher(text);
+        if (direct.matches()) return "Quality unlock: a request went without the VPN (" + direct.group(1) + ")";
+        Matcher watching = WATCHING.matcher(text);
+        if (watching.matches()) return "Watching " + watching.group(1);
+        String out = text.replace("Quality unlock: tunnel up through ", "Quality unlock: connected to ")
+                .replace("Song removal: stream is ", "Song removal: watching ")
+                .replace("following a new player for ", "following the player of ");
+        Matcher stream = STREAM.matcher(out);
+        StringBuffer named = new StringBuffer();
+        while (stream.find()) {
+            stream.appendReplacement(named, Matcher.quoteReplacement(
+                    stream.group(1).equals("vod") ? "a past broadcast" : stream.group(2)));
+        }
+        stream.appendTail(named);
+        return named.toString();
     }
 
     /** A request's address as a few words: what it is and where. */
     static String what(String url) {
         Matcher m = URL.matcher(url);
-        String host = m.find() ? m.group(1) : url;
+        if (!m.find()) return url; // not an address: as it is
+        String host = m.group(1);
         String path = m.group(2) == null ? "" : m.group(2);
         String server = host.split("\\.")[0];
         if (host.contains("usher.")) return "the stream's playlist list";

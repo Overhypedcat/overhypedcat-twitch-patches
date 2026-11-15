@@ -34,7 +34,7 @@ public final class VpnImportActivity extends Activity {
         try {
             startActivityForResult(pick, PICK);
         } catch (Exception e) {
-            finishWith(null, "The file picker couldn't be opened: " + e.getMessage());
+            finishWith("The file picker couldn't be opened: " + e.getMessage(), true);
         }
     }
 
@@ -50,18 +50,19 @@ public final class VpnImportActivity extends Activity {
         String name = displayName(uri);
         try {
             String text = read(uri);
+            boolean replacing = QualityUnlock.servers().has(name);
             String kept = QualityUnlock.servers().add(name, text);
-            QualityUnlock.serverAdded();
-            DebugLog.log("VPN servers: added " + kept + " from a file");
-            finishWith(kept, null);
+            QualityUnlock.serverAdded(kept);
+            DebugLog.log("VPN servers: " + (replacing ? "replaced " : "added ") + kept + " from a file");
+            finishWith((replacing ? "Replaced " : "Added ") + kept, false);
         } catch (Exception e) {
-            finishWith(null, "Not added: " + e.getMessage());
+            finishWith("Not added: " + e.getMessage(), true);
         }
     }
 
-    private void finishWith(String added, String problem) {
-        VpnServersPage.added(added, problem);
-        Toast.makeText(this, problem != null ? problem : "Added " + added, Toast.LENGTH_LONG).show();
+    /** Told on the VPN servers page when it's open, else as a toast. */
+    private void finishWith(String text, boolean problem) {
+        if (!VpnServersPage.added(text, problem)) Toast.makeText(this, text, Toast.LENGTH_LONG).show();
         finish();
     }
 

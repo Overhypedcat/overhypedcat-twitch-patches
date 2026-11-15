@@ -89,7 +89,7 @@ public final class VpnServersPage {
             try {
                 activity.startActivity(new Intent(activity, VpnImportActivity.class));
             } catch (Throwable t) {
-                say("The file picker couldn't be opened: " + t, true);
+                say("The file picker couldn't be opened: " + app.morphed.extension.twitch.Messages.of(t), true);
             }
         });
         TextView paste = button("Paste config", false);
@@ -127,14 +127,14 @@ public final class VpnServersPage {
         page.dialog.show();
     }
 
-    /** A server was added from a file: shown at once if the page is open. */
-    static void added(String name, String problem) {
+    /** A server was added from a file: shown on the page; false when the page isn't open (told elsewhere then). */
+    static boolean added(String text, boolean problem) {
         VpnServersPage page = open.get();
-        if (page == null) return;
-        if (problem == null) page.changed = true;
+        if (page == null) return false;
+        if (!problem) page.changed = true;
         page.refresh();
-        if (problem != null) page.say(problem, true);
-        else page.say("Added " + name, false);
+        page.say(text, problem);
+        return true;
     }
 
     private TextView button(String text, boolean filled) {
@@ -155,6 +155,30 @@ public final class VpnServersPage {
         message.setText(text);
         message.setTextColor(problem ? theme.danger : theme.secondary);
         message.setVisibility(View.VISIBLE);
+        message.setOnClickListener(null);
+        message.setClickable(false);
+    }
+
+    /** "Removed X  Undo": the server comes back as it was with one tap. */
+    private void sayRemoved(String name, String config) {
+        say("Removed " + name, false);
+        if (config == null) return;
+        android.text.SpannableString text = new android.text.SpannableString("Removed " + name + "   Undo");
+        int start = text.length() - 4;
+        text.setSpan(new android.text.style.ForegroundColorSpan(Theme.PURPLE), start, text.length(), 0);
+        text.setSpan(new android.text.style.StyleSpan(Typeface.BOLD), start, text.length(), 0);
+        message.setText(text);
+        message.setOnClickListener(v -> {
+            try {
+                QualityUnlock.servers().add(name, config);
+                QualityUnlock.serverAdded(name);
+                changed = true;
+                refresh();
+                say("Put back " + name, false);
+            } catch (Exception e) {
+                say(name + " couldn't be put back: " + e.getMessage(), true);
+            }
+        });
     }
 
     private void paste() {
@@ -166,10 +190,10 @@ public final class VpnServersPage {
             return;
         }
         VpnServers servers = QualityUnlock.servers();
-        String name = "Server " + (servers.names().size() + 1);
+        String name = servers.freeName(); // never one that's taken
         try {
             String kept = servers.add(name, text.toString());
-            QualityUnlock.serverAdded();
+            QualityUnlock.serverAdded(kept);
             changed = true;
             DebugLog.log("VPN servers: added " + kept + " from the clipboard");
             refresh();
@@ -209,12 +233,13 @@ public final class VpnServersPage {
             View remove = new Cross(activity, theme);
             remove.setContentDescription("Remove " + name);
             remove.setOnClickListener(v -> {
+                String config = QualityUnlock.servers().text(name);
                 if (QualityUnlock.servers().remove(name)) {
                     QualityUnlock.serverRemoved(name);
                     changed = true;
                     DebugLog.log("VPN servers: removed " + name);
                     refresh();
-                    say("Removed " + name, false);
+                    sayRemoved(name, config);
                 } else {
                     say(name + " couldn't be removed", true);
                 }

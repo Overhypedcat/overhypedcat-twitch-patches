@@ -37,8 +37,4 @@ public final class SongCopy {
         if (reduced == null) reduced = Align.reduce(mono(0, length()));
         return reduced;
     }
-
-    synchronized void setReduced(float[] value) {
-        reduced = value;
-    }
 }
