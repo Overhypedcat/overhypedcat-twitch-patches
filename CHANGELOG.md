@@ -1,3 +1,13 @@
+## [4.1.0](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v4.0.1...v4.1.0) (2026-11-16)
+
+### Bug Fixes
+
+* Display ads beside the stream (LeftThird, Banner) are declined ([0c61303](https://github.com/[secure]/overhypedcat-twitch-patches/commit/0c613037f5d70a73b29ca6270714766b323a2048))
+
+### New Features
+
+* Screen lock in full screen, and a song removal pill on the player ([651b810](https://github.com/[secure]/overhypedcat-twitch-patches/commit/651b81079092fb9a23fd1226c543b810d2d70c7c))
+
 ## [4.0.1](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v4.0.0...v4.0.1) (2026-11-15)
 
 ### Bug Fixes
