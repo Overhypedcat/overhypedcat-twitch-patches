@@ -26,12 +26,19 @@ now (or what went wrong).
 
 The app's Settings page has a **Patch settings** group with the VPN servers and Debug mode.
 
+## Screen lock
+
+In full screen, the player's controls have a padlock after the "fit video" button. Locked, the screen stays
+horizontal and touches don't bring the controls up (for watching while holding the phone loosely). Tap three times
+quickly to unlock: each tap shows a padlock with the taps so far. Leaving full screen or the app unlocks too.
+
 ## Ad blocker
 
 When Twitch stitches an ad into a live stream, the player gets the same stream requested as another player type
 (popout, embed, ...) that has no ad. If every player type has the ad, the ad segments are cut out and the player
 waits for live content. Twitch's ad server (`edge.ads.twitch.tv`) and tracking servers are refused inside the
-app, which removes the banner and feed ads on the main page, and the ads the app plays itself are never started.
+app, which removes the banner and feed ads on the main page, and the ads the app plays itself are never started,
+including the display ads shown beside the video in full screen.
 
 While you watch a stream, a small label in the top left corner of the video shows each blocked ad: "Blocking ads
 (360p)" while an ad in the stream is replaced (with the quality of the ad-free stream in use; during pre-rolls
@@ -47,6 +54,8 @@ second behind, and the picture is kept in step with it.
 
 - Only the stream you watch is listened to, never the previews on the main or Following page, and it carries on
   in the mini player and picture in picture.
+- When the player's controls are up, a pill beside the viewer count shows the step it is on ("Listening",
+  "Asking Shazam", "Downloading", "Lining up", "Removing song"), or what went wrong.
 - The line under the switch says what it is doing ("Listening for music", "Removing <song>", ...). **Retry**
   forgets the song and asks Shazam afresh, for when the wrong song or version was found.
 - A live version of a song (a concert, a cover) can't be removed: only the recorded version is on YouTube.
