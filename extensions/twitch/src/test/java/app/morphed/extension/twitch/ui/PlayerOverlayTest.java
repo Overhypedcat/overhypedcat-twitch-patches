@@ -110,4 +110,25 @@ public class PlayerOverlayTest {
         assertTrue(PlayerOverlay.isControls("skyline-controls-overlay"));
         assertFalse("the mini player has none of ours", PlayerOverlay.isControls("mini-player-controls-overlay"));
     }
+
+    @Test
+    public void theLockGoesAfterALabelInTheTopRow() {
+        // buttons end at 368, row 11..116, middle 1268: an "Intended for certain audiences" label at 380..900
+        assertTrue(ControlsLayout.inRowAfterButtons(380, 20, 900, 100, 368, 11, 116, 1268));
+        assertFalse("the buttons themselves", ControlsLayout.inRowAfterButtons(263, 11, 368, 116, 368, 11, 116, 1268));
+        assertFalse("the right-hand side", ControlsLayout.inRowAfterButtons(1879, 11, 2059, 116, 368, 11, 116, 1268));
+        assertFalse("another row", ControlsLayout.inRowAfterButtons(400, 500, 900, 600, 368, 11, 116, 1268));
+        assertFalse("a scrim over everything starts before the buttons",
+                ControlsLayout.inRowAfterButtons(126, -10, 2411, 648, 368, 11, 116, 1268));
+    }
+
+    @Test
+    public void theNativePlayersControlsAreKnownToo() {
+        assertTrue("React Native", PlayerOverlay.isControls("player-controls-overlay"));
+        assertTrue("its vertical view", PlayerOverlay.isControls("skyline-controls-overlay"));
+        assertTrue("the native player", PlayerOverlay.isControls("player_overlay"));
+        assertFalse(PlayerOverlay.isControls("player_overlay_container"));
+        assertFalse(PlayerOverlay.is(null, new String[]{"back_button"}));
+        assertTrue(PlayerOverlay.is("back_button", new String[]{"player-controls-back", "back_button"}));
+    }
 }

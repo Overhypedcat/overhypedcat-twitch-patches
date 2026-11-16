@@ -41,16 +41,21 @@ import app.morphed.extension.twitch.settings.PatchSettings;
  */
 public final class PlayerOverlay {
     private static final int TAG_KEY = 0x7e000102;
-    /** The controls of the player (classic, and the vertical view's). */
-    private static final String[] OVERLAYS = {"player-controls-overlay", "skyline-controls-overlay"};
-    private static final String TAP_LAYER = "player-controls-tap-layer";
-    private static final String BACK = "player-controls-back";
-    private static final String SCALE = "player-controls-scale-video";
-    private static final String STATS = "viewer-stats";
+    /*
+     * Twitch has two players: a React Native one (its views named by test ids) and a native Android one (named by
+     * resource ids). Each part is looked for by either name.
+     */
+    /** The controls of the player (React Native, its vertical view's, and the native player's). */
+    private static final String[] OVERLAYS = {"player-controls-overlay", "skyline-controls-overlay", "player_overlay"};
+    /** What a tap on the video lands on (it shows and hides the controls). */
+    private static final String[] TAP_LAYERS = {"player-controls-tap-layer", "player_view_delegate"};
+    private static final String[] BACK = {"player-controls-back", "back_button"};
+    private static final String[] SCALE = {"player-controls-scale-video"};
+    private static final String[] STATS = {"viewer-stats", "stream_stats_text"};
     /** The player's own pills, each of them also a child of the controls. */
     private static final String STATS_PARTS = "viewer-stats-";
     /** The vertical view's top bar (its controls may have neither a back button nor pills of their own). */
-    private static final String VERTICAL_TOP_BAR = "skyline-top-bar";
+    private static final String[] VERTICAL_TOP_BAR = {"skyline-top-bar"};
     /** The controls' parts are their children (classic); looked for a little deeper for other layouts. */
     private static final int PART_DEPTH = 3;
     private static final long HINT_MS = 1200;
@@ -58,6 +63,8 @@ public final class PlayerOverlay {
     private static final long SEARCH_GAP_MS = 60;
 
     private static int testIdKey;
+    /** Resource id -> its name (looked up once each: the window is walked often). */
+    private static final android.util.SparseArray<String> RESOURCE_NAMES = new android.util.SparseArray<>();
 
     private final Activity activity;
     private final Theme theme;
@@ -164,6 +171,7 @@ public final class PlayerOverlay {
 
         decor.addView(layer, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
+        guardTouches();
         // Every frame: the controls come, fade, move and go, and so do ours.
         ViewTreeObserver.OnPreDrawListener follow = () -> {
             followSafely();
@@ -186,6 +194,34 @@ public final class PlayerOverlay {
         });
         SongRemoval.addListener(songs);
         PatchSettings.addListener(settings);
+    }
+
+    /**
+     * While locked, the window's touches go to the shield only, before the screen sees them: the player also
+     * reads taps there (a double tap switches its chat mode), past any view on top.
+     */
+    private void guardTouches() {
+        android.view.Window window = activity.getWindow();
+        android.view.Window.Callback original = window.getCallback();
+        if (original == null || java.lang.reflect.Proxy.isProxyClass(original.getClass())) return;
+        window.setCallback((android.view.Window.Callback) java.lang.reflect.Proxy.newProxyInstance(
+                android.view.Window.Callback.class.getClassLoader(), new Class<?>[]{android.view.Window.Callback.class},
+                (proxy, method, args) -> {
+                    if (locked && "dispatchTouchEvent".equals(method.getName()) && args != null && args.length == 1
+                            && args[0] instanceof MotionEvent) {
+                        try {
+                            shield.dispatchTouchEvent((MotionEvent) args[0]);
+                        } catch (Throwable t) {
+                            failed(t);
+                        }
+                        return true;
+                    }
+                    try {
+                        return method.invoke(original, args);
+                    } catch (java.lang.reflect.InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                }));
     }
 
     /** Called on the activity's layout changes (Screens): once a player's controls are there, ours follow them. */
@@ -221,13 +257,10 @@ public final class PlayerOverlay {
      */
     private static void find(View view, View skip, View[] found) {
         if (view == skip || view.getVisibility() != View.VISIBLE || (found[0] != null && found[1] != null)) return;
-        Object id = view.getTag(testIdKey);
-        if (id instanceof String) {
-            if (TAP_LAYER.equals(id)) {
-                if (found[1] == null && view.getWidth() > 0) found[1] = view;
-                return;
-            }
-            if (isControls((String) id)) {
+        String id = idOf(view);
+        if (id != null) {
+            if (found[1] == null && is(id, TAP_LAYERS) && view.getWidth() > 0) found[1] = view;
+            if (isControls(id)) {
                 if (found[0] == null && view.getWidth() > 0) found[0] = view;
                 return;
             }
@@ -238,12 +271,36 @@ public final class PlayerOverlay {
         }
     }
 
-    /** A shown part of the controls by its test id, at most this many levels into them. */
-    private static View part(ViewGroup group, String id, int depth) {
+    /** A view's name: its React Native test id, else its resource id's name, else null. */
+    static String idOf(View view) {
+        Object tag = view.getTag(testIdKey);
+        if (tag instanceof String) return (String) tag;
+        int id = view.getId();
+        if (id == View.NO_ID || (id >>> 24) != 0x7f) return null; // (only the app's own resources)
+        String name = RESOURCE_NAMES.get(id);
+        if (name == null) {
+            try {
+                name = view.getResources().getResourceEntryName(id);
+            } catch (Exception unnamed) {
+                name = "";
+            }
+            RESOURCE_NAMES.put(id, name);
+        }
+        return name.isEmpty() ? null : name;
+    }
+
+    static boolean is(String id, String[] names) {
+        if (id == null) return false;
+        for (String name : names) if (name.equals(id)) return true;
+        return false;
+    }
+
+    /** A shown part of the controls by its name, at most this many levels into them. */
+    private static View part(ViewGroup group, String[] id, int depth) {
         for (int i = 0; i < group.getChildCount(); i++) {
             View child = group.getChildAt(i);
             if (!alive(child)) continue;
-            if (id.equals(child.getTag(testIdKey))) return child;
+            if (is(idOf(child), id)) return child;
             if (depth > 1 && child instanceof ViewGroup) {
                 View found = part((ViewGroup) child, id, depth - 1);
                 if (found != null) return found;
@@ -252,9 +309,8 @@ public final class PlayerOverlay {
         return null;
     }
 
-    static boolean isControls(String testId) {
-        for (String id : OVERLAYS) if (id.equals(testId)) return true;
-        return false;
+    static boolean isControls(String id) {
+        return is(id, OVERLAYS);
     }
 
     /** How much of a view shows: its own alpha and its parents' (the controls fade as a whole). */
@@ -324,10 +380,12 @@ public final class PlayerOverlay {
             ViewGroup group = (ViewGroup) controls;
             View back = part(group, BACK, PART_DEPTH), scale = part(group, SCALE, PART_DEPTH);
             View stats = part(group, STATS, PART_DEPTH);
-            lockShown = fullScreen() && placeLock(back, scale);
+            lockShown = fullScreen() && placeLock(group, back, scale);
             pillShown = Included.songRemoval() && PatchSettings.songRemoval() && placePill(group, stats, back);
         }
         show(lockButton, lockShown, alpha);
+        lockShownX = lockButton.getTranslationX();
+        if (!lockShown) lockTarget = Integer.MIN_VALUE;
         show(pill, pillShown, alpha);
     }
 
@@ -337,8 +395,11 @@ public final class PlayerOverlay {
         if (view.getVisibility() != wanted) view.setVisibility(wanted);
     }
 
-    /** The lock button: after the top row's left-hand buttons, as big as they are. */
-    private boolean placeLock(View back, View scale) {
+    /**
+     * The lock button: after the top row's left-hand buttons and anything the player shows after them there (a
+     * label as "Intended for certain audiences"), as big as the buttons; it slides along when that comes or goes.
+     */
+    private boolean placeLock(ViewGroup controls, View back, View scale) {
         View last = scale != null ? scale : back;
         if (last == null) return false;
         int first = -1;
@@ -347,8 +408,49 @@ public final class PlayerOverlay {
             first = at[0];
         }
         last.getLocationOnScreen(at);
-        place(lockButton, ControlsLayout.lockLeft(first, at[0], last.getWidth()), at[1], last.getWidth(), last.getHeight());
+        int lastLeft = at[0], rowTop = at[1], size = last.getWidth(), rowHeight = last.getHeight();
+        int step = ControlsLayout.lockLeft(first, lastLeft, size) - lastLeft; // the row's own spacing
+        int rowEnd = lastLeft + size;
+        controls.getLocationOnScreen(other);
+        int middle = other[0] + controls.getWidth() / 2;
+        rowEnd = Math.max(rowEnd, rowEndAfter(controls, rowEnd, rowTop, rowTop + rowHeight, middle, PART_DEPTH));
+        int left = rowEnd + (step - size); // the same gap as between the buttons
+        int target = Math.round(left - (float) layerAt[0]);
+        boolean wasShown = lockButton.getVisibility() == View.VISIBLE;
+        place(lockButton, left, rowTop, size, rowHeight); // (size and height; X is set below)
+        if (!wasShown || lockTarget == Integer.MIN_VALUE) {
+            lockButton.animate().cancel();
+            lockButton.setTranslationX(target);
+        } else if (Math.abs(target - lockTarget) > theme.dp(2)) {
+            // Something came or went in the row: it slides to its new place instead of jumping.
+            lockButton.setTranslationX(lockShownX);
+            lockButton.animate().translationX(target).setDuration(180).start();
+        } else {
+            lockButton.setTranslationX(lockShownX); // (still where it was, or on its way)
+        }
+        lockTarget = target;
         return true;
+    }
+
+    private int lockTarget = Integer.MIN_VALUE;
+    /** Where the lock button is drawn now (an animation moves it between frames). */
+    private float lockShownX;
+
+    /** Where the last thing shown in the top row after the left-hand buttons ends (0 when nothing is). */
+    private int rowEndAfter(ViewGroup group, int buttonsRight, int rowTop, int rowBottom, int middle, int depth) {
+        int end = 0;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View child = group.getChildAt(i);
+            if (!alive(child) || child == lockButton) continue;
+            child.getLocationOnScreen(other);
+            if (ControlsLayout.inRowAfterButtons(other[0], other[1], other[0] + child.getWidth(),
+                    other[1] + child.getHeight(), buttonsRight, rowTop, rowBottom, middle)) {
+                end = Math.max(end, other[0] + child.getWidth());
+            } else if (depth > 1 && child instanceof ViewGroup) {
+                end = Math.max(end, rowEndAfter((ViewGroup) child, buttonsRight, rowTop, rowBottom, middle, depth - 1));
+            }
+        }
+        return end;
     }
 
     /** The pill: one more of the player's own pills, after them; or on a line of its own above them. */
@@ -390,8 +492,8 @@ public final class PlayerOverlay {
             View child = controls.getChildAt(i);
             if (child == stats || !alive(child)) continue;
             child.getLocationOnScreen(at);
-            Object id = child.getTag(testIdKey);
-            if (id instanceof String && ((String) id).startsWith(STATS_PARTS)) {
+            String id = idOf(child);
+            if (id != null && id.startsWith(STATS_PARTS)) {
                 if (firstPill == null) {
                     firstPill = child;
                 } else {
@@ -436,7 +538,8 @@ public final class PlayerOverlay {
         taps.reset();
         savedOrientation = activity.getRequestedOrientation();
         activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
-        // (the player's controls fade by themselves in a moment; nothing brings them back until unlocked)
+        // The player's controls close as they would on a tap on the video; nothing brings them back until unlocked.
+        if (alive(controls.get())) tapVideo();
         shield.setVisibility(View.VISIBLE);
         show(lockButton, false, 0f);
         show(pill, false, 0f);
@@ -459,13 +562,36 @@ public final class PlayerOverlay {
         activity.setRequestedOrientation(savedOrientation);
         layer.removeCallbacks(fadeHint);
         if (byUser) {
-            // The padlock opens for a moment.
+            // The padlock opens for a moment, and the controls come back (as on a tap on the video).
             hintIcon.setOpen(true);
             showHint(TripleTap.NEEDED);
+            if (!alive(controls.get())) tapVideo();
         } else {
             fadeHint.run();
         }
         DebugLog.log("Player: screen unlocked (" + why + ")");
+    }
+
+    /**
+     * A tap on the video, as the viewer's finger would make it: the player shows or hides its controls. Made at
+     * a quarter of the video's width, half its height: clear of the play button in the middle and of the rows.
+     */
+    private void tapVideo() {
+        View tap = tapLayer.get();
+        if (!alive(tap)) return;
+        tap.getLocationOnScreen(at);
+        decor.getLocationOnScreen(other);
+        float x = at[0] - other[0] + tap.getWidth() * 0.25f, y = at[1] - other[1] + tap.getHeight() * 0.5f;
+        long now = SystemClock.uptimeMillis();
+        MotionEvent down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, x, y, 0);
+        MotionEvent up = MotionEvent.obtain(now, now + 50, MotionEvent.ACTION_UP, x, y, 0);
+        try {
+            decor.dispatchTouchEvent(down);
+            decor.dispatchTouchEvent(up);
+        } finally {
+            down.recycle();
+            up.recycle();
+        }
     }
 
     /** The padlock in the middle, with the taps so far as filled dots; it fades after a moment. */

@@ -54,6 +54,19 @@ public final class ControlsLayout {
     }
 
     /**
+     * Whether something shown in the top row comes after its left-hand buttons and before the middle (a label the
+     * player adds there, as "Intended for certain audiences"): the lock goes after it.
+     *
+     * @param buttonsRight where the left-hand buttons end
+     * @param rowTop,rowBottom the buttons' row
+     * @param middle the controls' middle: what starts past it belongs to the right-hand side
+     */
+    public static boolean inRowAfterButtons(int left, int top, int right, int bottom, int buttonsRight, int rowTop,
+                                            int rowBottom, int middle) {
+        return left >= buttonsRight - 1 && left < middle && right > left && top < rowBottom && bottom > rowTop;
+    }
+
+    /**
      * Whether a control lies in the pills' row to their right (the pill must end before it).
      *
      * @param top,bottom       the control
