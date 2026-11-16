@@ -15,6 +15,8 @@ import com.android.tools.smali.dexlib2.iface.reference.FieldReference
 import com.android.tools.smali.dexlib2.iface.reference.MethodReference
 import com.android.tools.smali.dexlib2.iface.reference.StringReference
 import app.morphe.patcher.util.smali.ExternalLabel
+import app.morphed.patches.twitch.settings.checkRegistersFree
+import app.morphed.patches.twitch.settings.reads
 
 private const val CLIENT_ADS_CLASS = "Lapp/morphed/extension/twitch/patches/ClientAdsPatch;"
 
@@ -51,10 +53,14 @@ val blockClientAdsPatch = bytecodePatch(
             val logged = (received until declineStart).firstOrNull { instructions[it].opcode == Opcode.INVOKE_STATIC }
                 ?: error("No ad trigger log call in $definingClass->$name")
             val next = instructions[logged + 1]
-            check(next is OneRegisterInstruction && next.opcode.setsRegister() && next.registerA <= 255) {
+            check(next is OneRegisterInstruction && next.opcode.setsRegister() && next.registerA <= 255 &&
+                !next.opcode.name.startsWith("move-result", ignoreCase = true) &&
+                next.registerA !in reads(next)) {
                 "Unexpected code after the ad trigger log in $definingClass->$name; the patch needs an update"
             }
             val free = next.registerA
+            // Overwritten by the check's result: the decline path must not read what it held before.
+            checkRegistersFree(this, declineStart - 1, setOf(free), "the ad trigger check")
             addInstructionsWithLabels(
                 logged + 1,
                 """

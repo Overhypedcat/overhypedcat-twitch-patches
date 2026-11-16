@@ -29,8 +29,9 @@ The app's Settings page has a **Patch settings** group with the VPN servers and 
 ## Screen lock
 
 In full screen, the player's controls have a padlock after the "fit video" button. Locked, the screen stays
-horizontal and touches don't bring the controls up (for watching while holding the phone loosely). Tap three times
-quickly to unlock: each tap shows a padlock with the taps so far. Leaving full screen or the app unlocks too.
+horizontal and touches don't bring the controls up (for watching while holding the phone loosely); it moves along
+when a label such as "Intended for certain audiences" shows there. Tap three times quickly to unlock: each tap
+shows a padlock with the taps so far. Leaving full screen or the app, or picture in picture, unlocks too.
 
 ## Ad blocker
 
@@ -54,8 +55,9 @@ second behind, and the picture is kept in step with it.
 
 - Only the stream you watch is listened to, never the previews on the main or Following page, and it carries on
   in the mini player and picture in picture.
-- When the player's controls are up, a pill beside the viewer count shows the step it is on ("Listening",
-  "Asking Shazam", "Downloading", "Lining up", "Removing song"), or what went wrong.
+- When the player's controls are up, a pill beside the viewer count (in the vertical view: beside the stream's
+  uptime) shows the step it is on ("Listening", "Asking Shazam", "Downloading", "Lining up", "Removing song"),
+  or what went wrong.
 - The line under the switch says what it is doing ("Listening for music", "Removing <song>", ...). **Retry**
   forgets the song and asks Shazam afresh, for when the wrong song or version was found.
 - A live version of a song (a concert, a cover) can't be removed: only the recorded version is on YouTube.

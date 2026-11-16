@@ -131,4 +131,14 @@ public class PlayerOverlayTest {
         assertFalse(PlayerOverlay.is(null, new String[]{"back_button"}));
         assertTrue(PlayerOverlay.is("back_button", new String[]{"player-controls-back", "back_button"}));
     }
+
+    @Test
+    public void theVerticalViewsUptimeIsRecognised() {
+        assertTrue(ComposeControls.isUptime("5:00:48"));
+        assertTrue(ComposeControls.isUptime("12:07"));
+        assertTrue(ComposeControls.isUptime(" 102:00:01 "));
+        assertFalse("viewers", ComposeControls.isUptime("2K"));
+        assertFalse("a chat time", ComposeControls.isUptime("22:29 he took the door off"));
+        assertFalse(ComposeControls.isUptime(null));
+    }
 }

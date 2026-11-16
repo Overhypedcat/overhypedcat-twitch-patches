@@ -41,6 +41,7 @@ import app.morphed.extension.twitch.settings.PatchSettings;
  */
 public final class PlayerOverlay {
     private static final int TAG_KEY = 0x7e000102;
+    private static final int GUARD_KEY = 0x7e000103;
     /*
      * Twitch has two players: a React Native one (its views named by test ids) and a native Android one (named by
      * resource ids). Each part is looked for by either name.
@@ -56,11 +57,17 @@ public final class PlayerOverlay {
     private static final String STATS_PARTS = "viewer-stats-";
     /** The vertical view's top bar (its controls may have neither a back button nor pills of their own). */
     private static final String[] VERTICAL_TOP_BAR = {"skyline-top-bar"};
+    /** The native player's vertical view: its controls are this one Compose view. */
+    private static final String COMPOSE_CONTROLS = "player_overlay_container";
+    /** Compose's nodes are read at most this often (each read walks its accessibility tree). */
+    private static final long COMPOSE_READ_GAP_MS = 150;
     /** The controls' parts are their children (classic); looked for a little deeper for other layouts. */
     private static final int PART_DEPTH = 3;
     private static final long HINT_MS = 1200;
     /** The window is looked through for the controls at most this often while they aren't up. */
     private static final long SEARCH_GAP_MS = 60;
+    /** ... and this often while no player is on screen (the home page, the chat alone). */
+    private static final long IDLE_SEARCH_GAP_MS = 500;
 
     private static int testIdKey;
     /** Resource id -> its name (looked up once each: the window is walked often). */
@@ -83,6 +90,12 @@ public final class PlayerOverlay {
     private final Runnable fadeHint, followLater;
     private WeakReference<View> controls = new WeakReference<>(null), tapLayer = new WeakReference<>(null);
     private long searchedAt;
+    private WeakReference<View> composeControls = new WeakReference<>(null);
+    private final android.graphics.Rect uptime = new android.graphics.Rect();
+    private boolean uptimeShown;
+    private long uptimeReadAt;
+    /** A player's tap layer was seen (it going away, while locked, means the player closed). */
+    private boolean hadTapLayer;
     private boolean followQueued;
     private boolean locked;
     private int savedOrientation;
@@ -203,7 +216,13 @@ public final class PlayerOverlay {
     private void guardTouches() {
         android.view.Window window = activity.getWindow();
         android.view.Window.Callback original = window.getCallback();
-        if (original == null || java.lang.reflect.Proxy.isProxyClass(original.getClass())) return;
+        View decorView = activity.getWindow().getDecorView();
+        if (decorView.getTag(GUARD_KEY) != null) return; // (guarded already)
+        if (original == null) {
+            DebugLog.log("PROBLEM Player: the window has no touch callback, a locked screen can't hold back taps");
+            return;
+        }
+        decorView.setTag(GUARD_KEY, Boolean.TRUE);
         window.setCallback((android.view.Window.Callback) java.lang.reflect.Proxy.newProxyInstance(
                 android.view.Window.Callback.class.getClassLoader(), new Class<?>[]{android.view.Window.Callback.class},
                 (proxy, method, args) -> {
@@ -231,14 +250,13 @@ public final class PlayerOverlay {
             testIdKey = activity.getResources().getIdentifier("react_test_id", "id", activity.getPackageName());
             if (testIdKey == 0) testIdKey = -1;
         }
-        if (testIdKey < 0) return;
         View decor = activity.getWindow().getDecorView();
         PlayerOverlay overlay = (PlayerOverlay) decor.getTag(TAG_KEY);
         if (overlay == null) {
             // (the layer is added over the app's content once and stays: adding it lays the window out again)
-            View[] found = new View[2];
+            View[] found = new View[3];
             find(root, null, found);
-            if (found[0] == null) return;
+            if (found[0] == null && found[2] == null) return;
             overlay = new PlayerOverlay(activity);
             decor.setTag(TAG_KEY, overlay);
         }
@@ -260,6 +278,12 @@ public final class PlayerOverlay {
         String id = idOf(view);
         if (id != null) {
             if (found[1] == null && is(id, TAP_LAYERS) && view.getWidth() > 0) found[1] = view;
+            // found[2]: the vertical view's controls, drawn by Compose (no children of their own)
+            if (found.length > 2 && found[2] == null && COMPOSE_CONTROLS.equals(id) && view.getWidth() > 0
+                    && view.getClass().getName().endsWith("ComposeView")) {
+                found[2] = view;
+                return;
+            }
             if (isControls(id)) {
                 if (found[0] == null && view.getWidth() > 0) found[0] = view;
                 return;
@@ -273,7 +297,7 @@ public final class PlayerOverlay {
 
     /** A view's name: its React Native test id, else its resource id's name, else null. */
     static String idOf(View view) {
-        Object tag = view.getTag(testIdKey);
+        Object tag = testIdKey > 0 ? view.getTag(testIdKey) : null;
         if (tag instanceof String) return (String) tag;
         int id = view.getId();
         if (id == View.NO_ID || (id >>> 24) != 0x7f) return null; // (only the app's own resources)
@@ -350,19 +374,25 @@ public final class PlayerOverlay {
         View known = controls.get();
         if (alive(known)) return known;
         long now = SystemClock.uptimeMillis();
-        if (now - searchedAt < SEARCH_GAP_MS) {
+        // Often while a player is on screen (its controls come back any moment), seldom while none is.
+        long gap = alive(tapLayer.get()) ? SEARCH_GAP_MS : IDLE_SEARCH_GAP_MS;
+        if (now - searchedAt < gap) {
             // Too soon to look again: looked for once more after the gap (no frame may come by itself).
             if (!followQueued) {
                 followQueued = true;
-                layer.postDelayed(followLater, SEARCH_GAP_MS);
+                layer.postDelayed(followLater, gap);
             }
             return null;
         }
         searchedAt = now;
-        View[] found = new View[2];
+        View[] found = new View[3];
         find(decor, layer, found);
         controls = new WeakReference<>(found[0]);
-        if (found[1] != null) tapLayer = new WeakReference<>(found[1]);
+        composeControls = new WeakReference<>(found[2]);
+        if (found[1] != null) {
+            tapLayer = new WeakReference<>(found[1]);
+            hadTapLayer = true;
+        }
         return found[0];
     }
 
@@ -371,7 +401,7 @@ public final class PlayerOverlay {
         float alpha = pictureInPicture() ? 0f : shownAlpha(controls);
         boolean shown = alpha > 0.02f && controls instanceof ViewGroup;
         if (locked && !fullScreen()) unlock("left full screen", false);
-        else if (locked && tapLayer.get() != null && !alive(tapLayer.get()) && controls == null) {
+        else if (locked && hadTapLayer && !alive(tapLayer.get()) && controls == null) {
             unlock("the player closed", false);
         }
         boolean lockShown = false, pillShown = false;
@@ -382,9 +412,13 @@ public final class PlayerOverlay {
             View stats = part(group, STATS, PART_DEPTH);
             lockShown = fullScreen() && placeLock(group, back, scale);
             pillShown = Included.songRemoval() && PatchSettings.songRemoval() && placePill(group, stats, back);
+        } else if (!locked && controls == null && Included.songRemoval() && PatchSettings.songRemoval()
+                && !pictureInPicture() && alive(composeControls.get())) {
+            layer.getLocationOnScreen(layerAt);
+            pillShown = placePillByUptime(composeControls.get());
+            if (pillShown) alpha = 1f; // (Compose's fade can't be read: shown while its uptime is)
         }
         show(lockButton, lockShown, alpha);
-        lockShownX = lockButton.getTranslationX();
         if (!lockShown) lockTarget = Integer.MIN_VALUE;
         show(pill, pillShown, alpha);
     }
@@ -417,24 +451,23 @@ public final class PlayerOverlay {
         int left = rowEnd + (step - size); // the same gap as between the buttons
         int target = Math.round(left - (float) layerAt[0]);
         boolean wasShown = lockButton.getVisibility() == View.VISIBLE;
-        place(lockButton, left, rowTop, size, rowHeight); // (size and height; X is set below)
+        float drawnX = lockButton.getTranslationX(); // (where it is now: an animation may be moving it)
+        place(lockButton, left, rowTop, size, rowHeight);
         if (!wasShown || lockTarget == Integer.MIN_VALUE) {
             lockButton.animate().cancel();
             lockButton.setTranslationX(target);
         } else if (Math.abs(target - lockTarget) > theme.dp(2)) {
             // Something came or went in the row: it slides to its new place instead of jumping.
-            lockButton.setTranslationX(lockShownX);
+            lockButton.setTranslationX(drawnX);
             lockButton.animate().translationX(target).setDuration(180).start();
         } else {
-            lockButton.setTranslationX(lockShownX); // (still where it was, or on its way)
+            lockButton.setTranslationX(drawnX); // still where it was, or on its way (place() mustn't stop it)
         }
         lockTarget = target;
         return true;
     }
 
     private int lockTarget = Integer.MIN_VALUE;
-    /** Where the lock button is drawn now (an animation moves it between frames). */
-    private float lockShownX;
 
     /** Where the last thing shown in the top row after the left-hand buttons ends (0 when nothing is). */
     private int rowEndAfter(ViewGroup group, int buttonsRight, int rowTop, int rowBottom, int middle, int depth) {
@@ -456,9 +489,14 @@ public final class PlayerOverlay {
     /** The pill: one more of the player's own pills, after them; or on a line of its own above them. */
     private boolean placePill(ViewGroup controls, View stats, View back) {
         SongRemoval.Status status = SongRemoval.status();
-        SongPillText words = SongPillText.of(status.step, status.problem);
+        if (status != pillStatus || shownPill == null) { // (worked out again only when the status changes)
+            pillStatus = status;
+            pillWords = SongPillText.of(status.step, status.problem);
+        }
+        SongPillText words = pillWords;
         if (shownPill == null || !words.text.equals(shownPill.text) || words.tone != shownPill.tone) {
             shownPill = words;
+            pillWidth = -1;
             pillText.setText(words.text);
             pillIcon.setColor(words.tone == SongPillText.Tone.PROBLEM ? 0xFFFF6B6B : 0xFFFFFFFF);
             pillText.setTextColor(words.tone == SongPillText.Tone.PROBLEM ? 0xFFFFB3B3 : 0xFFFFFFFF);
@@ -515,10 +553,58 @@ public final class PlayerOverlay {
         return true;
     }
 
-    /** The pill's width with its whole text. */
+    private SongRemoval.Status pillStatus;
+    private SongPillText pillWords;
+    private int pillWidth = -1;
+
+    /**
+     * The pill in the vertical view (Compose controls): after the stream's uptime in the controls' top row, while
+     * that shows (it's there only while the controls are up).
+     */
+    private boolean placePillByUptime(View compose) {
+        long now = SystemClock.uptimeMillis();
+        if (now - uptimeReadAt >= COMPOSE_READ_GAP_MS) {
+            uptimeReadAt = now;
+            uptimeShown = ComposeControls.uptime(compose, uptime);
+        } else if (!followQueued) {
+            followQueued = true; // looked at again once the gap is over (no frame may come by itself)
+            layer.postDelayed(followLater, COMPOSE_READ_GAP_MS);
+        }
+        if (!uptimeShown || uptime.width() <= 0) return false;
+        refreshPillWords();
+        compose.getLocationOnScreen(at);
+        int left = uptime.right + theme.dp(8);
+        int room = at[0] + compose.getWidth() - theme.dp(12) - left;
+        int height = Math.max(uptime.height(), theme.dp(22));
+        if (room < theme.dp(48)) return false;
+        place(pill, left, uptime.centerY() - height / 2, Math.min(wantedWidth(), room), height);
+        return true;
+    }
+
+    /** The pill's words and colors, from song removal's status (worked out again only when it changes). */
+    private void refreshPillWords() {
+        SongRemoval.Status status = SongRemoval.status();
+        if (status != pillStatus || shownPill == null) {
+            pillStatus = status;
+            pillWords = SongPillText.of(status.step, status.problem);
+        }
+        SongPillText words = pillWords;
+        if (shownPill == null || !words.text.equals(shownPill.text) || words.tone != shownPill.tone) {
+            shownPill = words;
+            pillWidth = -1;
+            pillText.setText(words.text);
+            pillIcon.setColor(words.tone == SongPillText.Tone.PROBLEM ? 0xFFFF6B6B : 0xFFFFFFFF);
+            pillText.setTextColor(words.tone == SongPillText.Tone.PROBLEM ? 0xFFFFB3B3 : 0xFFFFFFFF);
+        }
+    }
+
+    /** The pill's width with its whole text (measured again only when the text changes). */
     private int wantedWidth() {
-        float text = pillText.getPaint().measureText(pillText.getText().toString());
-        return pill.getPaddingLeft() + pill.getPaddingRight() + theme.dp(23) + (int) Math.ceil(text) + 1;
+        if (pillWidth < 0) {
+            float text = pillText.getPaint().measureText(shownPill.text);
+            pillWidth = pill.getPaddingLeft() + pill.getPaddingRight() + theme.dp(23) + (int) Math.ceil(text) + 1;
+        }
+        return pillWidth;
     }
 
     private void place(View view, int screenX, int screenY, int width, int height) {
@@ -534,12 +620,13 @@ public final class PlayerOverlay {
 
     private void lock() {
         if (locked) return;
+        // The player's controls close as they would on a tap on the video (before the guard takes the window's
+        // touches, so that tap reaches the player); nothing brings them back until unlocked.
+        if (alive(controls.get())) tapVideo();
         locked = true;
         taps.reset();
         savedOrientation = activity.getRequestedOrientation();
         activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
-        // The player's controls close as they would on a tap on the video; nothing brings them back until unlocked.
-        if (alive(controls.get())) tapVideo();
         shield.setVisibility(View.VISIBLE);
         show(lockButton, false, 0f);
         show(pill, false, 0f);
@@ -559,7 +646,10 @@ public final class PlayerOverlay {
         locked = false;
         taps.reset();
         shield.setVisibility(View.GONE);
-        activity.setRequestedOrientation(savedOrientation);
+        // Back to the orientation from before, unless the app has asked for another since (leaving full screen).
+        if (activity.getRequestedOrientation() == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
+            activity.setRequestedOrientation(savedOrientation);
+        }
         layer.removeCallbacks(fadeHint);
         if (byUser) {
             // The padlock opens for a moment, and the controls come back (as on a tap on the video).
