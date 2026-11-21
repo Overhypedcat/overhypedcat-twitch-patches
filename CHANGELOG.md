@@ -1,3 +1,9 @@
+## [4.2.1](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v4.2.0...v4.2.1) (2026-11-21)
+
+### Bug Fixes
+
+* Screen lock and song pill in the native player's controls, and back after an error ([89042cb](https://github.com/[secure]/overhypedcat-twitch-patches/commit/89042cb6b0f990a719b679531aafb0a8ed9b895f))
+
 ## [4.2.0](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v4.1.1...v4.2.0) (2026-11-20)
 
 ### New Features
