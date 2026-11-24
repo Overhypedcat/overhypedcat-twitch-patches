@@ -2,6 +2,7 @@ package app.morphed.extension.twitch.hls;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -42,5 +43,20 @@ public class PassThroughTest {
         assertFalse(out.contains("stitched-ad"));
         assertTrue(out.contains("#EXT-X-PART:") && out.contains("#EXT-X-TWITCH-PREFETCH:"));
         assertFalse(AdMarkers.withoutAdTags(text, true).contains("#EXT-X-TWITCH-PREFETCH:"));
+    }
+
+
+    @Test
+    public void aTriggerMarkerAloneLeavesThePlaylistByteForByte() {
+        // Twitch's session trigger, there all stream long: not an ad, so the playlist goes on as Twitch sent it.
+        String text = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:2337\n"
+                + "#EXT-X-DATERANGE:ID=\"trigger-1\",CLASS=\"twitch-trigger\",START-DATE=\"2026-11-24T18:39:57.109Z\","
+                + "END-ON-NEXT=YES,X-TV-TWITCH-TRIGGER-URL=\"https://euc13.playlist.ttvnw.net/trigger/x\"\n"
+                + "#EXTINF:2.000,live\nhttps://e/1.ts\n#EXT-X-TWITCH-PREFETCH:https://e/2.ts\n";
+        assertSame(text, AdMarkers.withoutAdTags(text, false));
+        // a maf-ad marker (an ad cue the app would act on) still goes
+        String maf = text + "#EXT-X-DATERANGE:ID=\"m\",CLASS=\"twitch-maf-ad\",START-DATE=\"2026-11-24T18:40:00.000Z\"\n";
+        assertFalse(AdMarkers.withoutAdTags(maf, false).contains("twitch-maf-ad"));
+        assertTrue(AdMarkers.withoutAdTags(maf, false).contains("twitch-trigger"));
     }
 }

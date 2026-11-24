@@ -300,11 +300,15 @@ public class AdBlockerTest {
         blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
         String other = "https://euc11.playlist.ttvnw.net/v1/playlist/pbp.m3u8";
         now += 3_000;
-        String text = Playlists.media("pbp", 500, "llaa", true);
 
-        assertSame(text, blocker.process(other, text));
-        assertFalse(blocker.isKnownMediaPlaylist(other));
-        assertEquals(Collections.emptyList(), notices);
+        String out = blocker.process(other, Playlists.media("pbp", 500, "llaa", true));
+
+        assertFalse("blocked on its own: its ads cut out", out.contains("/ads/"));
+        assertTrue(out.contains(Playlists.segment("pbp", 500)));
+        // never mixed into the stream watched
+        String watched = blocker.process(NATIVE_1080, Playlists.media("n", 101, "llll", false));
+        assertFalse(watched.contains("pbp"));
+        assertEquals(Collections.emptyList(), problems);
     }
 
     @Test
@@ -541,6 +545,95 @@ public class AdBlockerTest {
         assertFalse("never a smaller discontinuity sequence", discontinuitySequence(back) < discontinuitySequence(stitched));
     }
 
+    @Test
+    public void numbersNeverGoBackAcrossABackupBreakAndItsEnd() {
+        backupHasAds("site", false);
+        List<String> served = new ArrayList<>();
+        served.add(blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false)));
+        served.add(blocker.process(NATIVE_1080, Playlists.media("n", 101, "llaa", true)));
+        served.add(blocker.process(NATIVE_1080, Playlists.media("n", 103, "aall", true)));
+        for (long first = 105; first <= 130; first++) {
+            now += 2_000;
+            served.add(blocker.process(NATIVE_1080, Playlists.media("n", first, "llll", false)));
+        }
+        java.util.Map<String, Long> numberOf = new java.util.HashMap<>();
+        long lastMedia = Long.MIN_VALUE, lastDiscontinuity = Long.MIN_VALUE;
+        for (String playlist : served) {
+            long media = numbers(playlist).values().stream().mapToLong(Long::longValue).min().orElse(lastMedia);
+            assertTrue("the media sequence never goes back:\n" + playlist, media >= lastMedia);
+            assertTrue("nor the discontinuity sequence:\n" + playlist, discontinuitySequence(playlist) >= lastDiscontinuity);
+            lastMedia = media;
+            lastDiscontinuity = discontinuitySequence(playlist);
+            for (java.util.Map.Entry<String, Long> e : numbers(playlist).entrySet()) {
+                Long before = numberOf.put(e.getKey(), e.getValue());
+                if (before != null) assertEquals("a segment keeps its number: " + e.getKey(), before, e.getValue());
+            }
+        }
+        String last = served.get(served.size() - 1);
+        assertTrue("Twitch's own playlist in the end, with its prefetch hint",
+                last.contains("#EXT-X-TWITCH-PREFETCH:" + Playlists.segment("n", 134)));
+    }
+
+    @Test
+    public void aMovedStreamIsFollowedWhileAnotherPlayerIsAround() {
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+        // another player's playlist, polled together with the stream (blocked on its own, quietly)
+        now += 300;
+        blocker.process("https://euc11.playlist.ttvnw.net/v1/playlist/other.m3u8", Playlists.media("o", 300, "llll", false));
+        // the stream moves: its old URL stops, the new one shares its segments
+        now += 2_000;
+        String moved = "https://euc12.playlist.ttvnw.net/v1/playlist/moved.m3u8";
+        String out = blocker.process(moved, Playlists.media("n", 101, "llll", false));
+        assertTrue(out.contains(Playlists.segment("n", 104)));
+        assertTrue("taken as the stream watched", blocker.isKnownMediaPlaylist(moved));
+        assertEquals(Collections.emptyList(), problems);
+    }
+
+    @Test
+    public void aPlaylistBlockedOnItsOwnIsTakenBackWhenTheStreamTurnsOutToHaveMoved() {
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+        String moved = "https://euc12.playlist.ttvnw.net/v1/playlist/moved.m3u8";
+        // its first poll comes within a second of the old URL's last: taken for another player at first
+        now += 500;
+        blocker.process(moved, Playlists.media("n", 100, "llll", false));
+        // the old URL is no longer polled: it was the stream moving, and an ad is blocked with a backup again
+        backupHasAds("site", false);
+        now += 3_000;
+        String out = blocker.process(moved, Playlists.media("n", 102, "llaa", true));
+        assertTrue("the stream's backup, not just a cut", out.contains(Playlists.segment("site", 104)));
+    }
+
+    @Test
+    public void anotherPlayersAdShowsNoLabel() {
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+        now += 400;
+        String out = blocker.process("https://euc11.playlist.ttvnw.net/v1/playlist/other.m3u8",
+                Playlists.media("o", 300, "llaa", true));
+        assertFalse(out.contains("/ads/"));
+        assertEquals("not the stream on screen: no label", Collections.emptyList(), notices);
+    }
+
+    @Test
+    public void aQualitySwitchedToAfterABreakGoesOnWithTheSameNumbers() {
+        // A break cut on 1080p (no backup) moves the stream's numbers; 720p, first polled after it, follows them.
+        http.getResponses.clear();
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+        blocker.process(NATIVE_1080, Playlists.media("n", 102, "llaa", true));
+        now += 2_000;
+        blocker.process(NATIVE_1080, Playlists.media("n", 104, "aall", true));
+        String on1080 = null;
+        for (long first = 106; first <= 125; first++) {
+            now += 2_000;
+            on1080 = blocker.process(NATIVE_1080, Playlists.media("n", first, "llll", false));
+        }
+        now += 2_000;
+        String on720 = blocker.process(NATIVE_720, Playlists.media("m", 126, "llll", false));
+        long newest1080 = Collections.max(numbers(on1080).values());
+        long newest720 = Collections.max(numbers(on720).values());
+        assertEquals("the next moment, one number on", newest1080 + 1, newest720);
+        assertEquals(discontinuitySequence(on1080), discontinuitySequence(on720));
+    }
+
     /** Segment URIs to the numbers a playlist gives them. */
     private static java.util.Map<String, Long> numbers(String playlist) {
         java.util.Map<String, Long> out = new java.util.HashMap<>();
@@ -611,11 +704,13 @@ public class AdBlockerTest {
         blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
         String second = "https://euc11.playlist.ttvnw.net/v1/playlist/second.m3u8";
 
-        // Same segments, polled half a second after the stream's own poll: another player of it.
+        // Same segments, polled half a second after the stream's own poll: another player of it, on its own.
         now += 500;
         String text = Playlists.media("n", 100, "llll", false);
-        assertSame(text, blocker.process(second, text));
-        assertFalse(blocker.isKnownMediaPlaylist(second));
+        assertSame("no ad: as Twitch sent it", text, blocker.process(second, text));
+        // the stream watched goes on at its own URL, untouched by it
+        String next = Playlists.media("n", 101, "llll", false);
+        assertSame(next, blocker.process(NATIVE_1080, next));
     }
 
     @Test
@@ -626,26 +721,30 @@ public class AdBlockerTest {
     }
 
     @Test
-    public void leavesAnotherPlayersPlaylistAloneWhileTheStreamPlays() {
+    public void anotherPlayersPlaylistIsBlockedOnItsOwnWhileTheStreamPlays() {
         blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
         String other = "https://euc11.playlist.ttvnw.net/v1/playlist/other.m3u8";
-        String text = Playlists.media("o", 500, "llaa", true);
 
-        now += 1_000;
-        assertSame(text, blocker.process(other, text));
-        assertFalse(blocker.isKnownMediaPlaylist(other));
+        now += 500;
+        String out = blocker.process(other, Playlists.media("o", 500, "llaa", true));
+
+        assertFalse(out.contains("/ads/"));
+        assertFalse("not mixed into the stream watched",
+                blocker.process(NATIVE_1080, Playlists.media("n", 101, "llll", false)).contains("/o/"));
         assertEquals(Collections.emptyList(), problems);
-        assertEquals(Collections.emptyList(), notices);
     }
 
     @Test
-    public void reportsUnknownPlaylistServerWithoutARecentStream() {
+    public void blocksALivePlaylistWhoseStreamWasntSeen() {
+        // A stream picked up again after a long pause, or loaded where its playlist list wasn't seen.
         now += 10 * 60 * 1000;
         String unknown = "https://video-weaver.other.hls.ttvnw.net/v1/playlist/unknown.m3u8";
-        String text = Playlists.media("n", 100, "llaa", true);
 
-        assertSame(text, blocker.process(unknown, text));
-        assertEquals(Collections.singletonList(Problem.UNRECOGNIZED_PLAYLIST), problems);
+        String out = blocker.process(unknown, Playlists.media("n", 100, "llaa", true));
+
+        assertFalse("its ads cut out", out.contains("/ads/"));
+        assertTrue(blocker.isKnownMediaPlaylist(unknown));
+        assertEquals("handled, not an error to report", Collections.emptyList(), problems);
     }
 
     @Test

@@ -42,6 +42,24 @@ public final class PlaylistStitcher {
     private String lastOutput;
     private int emptyPolls;
 
+    /**
+     * Twitch's numbers to the player's, shared by every quality of a stream: a break cut on one quality moves
+     * them for all, so a switch of quality (Auto, or by hand) lands on the same numbers for the same moment.
+     */
+    public static final class Numbering {
+        long sequenceOffset, discontinuityOffset;
+    }
+
+    private final Numbering numbering;
+
+    public PlaylistStitcher() {
+        this(new Numbering());
+    }
+
+    public PlaylistStitcher(Numbering numbering) {
+        this.numbering = numbering;
+    }
+
     /** How many segments it remembers; for tests. */
     synchronized int rememberedSegments() {
         return sequenceByUri.size();
@@ -68,23 +86,27 @@ public final class PlaylistStitcher {
      * break that comes later carries on from them.
      */
     public synchronized String passThrough(MediaPlaylist playlist, String text) {
-        if (nextSequence == Long.MIN_VALUE) {
-            nextSequence = playlist.mediaSequence;
-            discontinuityBase = playlist.discontinuitySequence;
-            discontinuityBaseSequence = playlist.mediaSequence;
+        if (!rewriting && (sequenceOffset != numbering.sequenceOffset
+                || discontinuityOffset != numbering.discontinuityOffset)) {
+            // Another quality's break moved the stream's numbers: this one follows them from here.
+            sequenceOffset = numbering.sequenceOffset;
+            discontinuityOffset = numbering.discontinuityOffset;
+            sequenceByUri.clear();
+            discontinuities.clear();
+            nextSequence = Long.MIN_VALUE;
         }
+        if (nextSequence == Long.MIN_VALUE) start(playlist);
         if (rewriting) {
-            // Leaving a stitched stretch: the same segments keep the numbers the player knows them by.
-            Long known = null;
-            long nativeNumber = 0;
-            for (int i = playlist.segments.size() - 1; i >= 0 && known == null; i--) {
-                known = sequenceByUri.get(playlist.segments.get(i).uri);
-                nativeNumber = playlist.segments.get(i).sequence;
-            }
-            sequenceOffset = known != null ? known - nativeNumber : nextSequence - playlist.mediaSequence;
+            // Leaving a stitched stretch: the same segments keep the numbers the player knows them by (see
+            // readyToHandBack: Twitch's first segment is one of them, and nothing stitched is left in the window).
+            Long first = playlist.segments.isEmpty() ? null : sequenceByUri.get(playlist.segments.get(0).uri);
+            sequenceOffset = first != null ? first - playlist.segments.get(0).sequence : nextSequence - playlist.mediaSequence;
             discontinuityOffset = discontinuitySequenceAt(playlist.mediaSequence + sequenceOffset)
                     - playlist.discontinuitySequence;
             rewriting = false;
+            handBackWaits = 0;
+            numbering.sequenceOffset = sequenceOffset;
+            numbering.discontinuityOffset = discontinuityOffset;
         }
         remember(playlist);
         pendingDiscontinuity = false;
@@ -98,6 +120,35 @@ public final class PlaylistStitcher {
         lastOutput = out;
         return out;
     }
+
+    /**
+     * Whether Twitch's own playlist can take over from the stitched one now without the player seeing a number go
+     * back or skip: its first segment is one the player has (at a known number), its segments follow on from it,
+     * and every discontinuity the player was given from there on is one Twitch's playlist has too. Until then the
+     * stitched playlist goes on (a window holds about half a minute). After HAND_BACK_MAX_WAITS polls it takes
+     * over all the same, carrying on after the last number given.
+     */
+    public synchronized boolean readyToHandBack(MediaPlaylist playlist) {
+        if (!rewriting) return true;
+        if (++handBackWaits > HAND_BACK_MAX_WAITS || playlist.segments.isEmpty()) return true;
+        Long first = sequenceByUri.get(playlist.segments.get(0).uri);
+        if (first == null) return false;
+        java.util.Set<Long> twitchsOwn = new java.util.HashSet<>();
+        for (int i = 0; i < playlist.segments.size(); i++) {
+            MediaPlaylist.Segment segment = playlist.segments.get(i);
+            Long number = sequenceByUri.get(segment.uri);
+            if (number != null && number != first + i) return false; // (the player has them in another order)
+            if (segment.discontinuity) twitchsOwn.add(first + i);
+        }
+        for (Long at : discontinuities.tailSet(first)) {
+            if (!twitchsOwn.contains(at)) return false; // one of ours (an ad cut, a backup) still in the window
+        }
+        return true;
+    }
+
+    /** About a minute of polls; then Twitch's playlist takes over whatever is left in the window. */
+    static final int HAND_BACK_MAX_WAITS = 30;
+    private int handBackWaits;
 
     /** Twitch's numbers to the player's: what a stitched stretch left them apart (0 until a break). */
     private long sequenceOffset, discontinuityOffset;
@@ -145,13 +196,10 @@ public final class PlaylistStitcher {
     }
 
     public synchronized String process(MediaPlaylist playlist, String text, String source) {
-        if (nextSequence == Long.MIN_VALUE) {
-            nextSequence = playlist.mediaSequence;
-            discontinuityBase = playlist.discontinuitySequence;
-            discontinuityBaseSequence = playlist.mediaSequence;
-        }
+        if (nextSequence == Long.MIN_VALUE) start(playlist);
 
         if (!rewriting && NATIVE.equals(source) && !playlist.hasAdSegments()) return passThrough(playlist, text);
+        if (playlist.hasAdSegments()) handBackWaits = 0; // (a new break: the wait to hand back starts again)
 
         rewriting = true;
         boolean sourceChanged = lastSource != null && !lastSource.equals(source);
@@ -170,7 +218,9 @@ public final class PlaylistStitcher {
 
             Long sequence = sequenceByUri.get(segment.uri);
             if (sequence == null) {
-                if (emptyPolls < MAX_EMPTY_POLLS
+                // After MAX_EMPTY_POLLS a lagging source gets its newest segment through, not its whole window
+                // (played already, at other numbers).
+                if ((emptyPolls < MAX_EMPTY_POLLS || i < playlist.segments.size() - 1)
                         && segment.programDateTime != MediaPlaylist.UNKNOWN_TIME
                         && lastProgramDateTime != MediaPlaylist.UNKNOWN_TIME
                         && segment.programDateTime <= lastProgramDateTime) {
@@ -227,6 +277,17 @@ public final class PlaylistStitcher {
             if (!segment.isAd()) return true;
         }
         return false;
+    }
+
+    /** A quality's first playlist: numbered as the stream's other qualities are now. */
+    private void start(MediaPlaylist playlist) {
+        if (!rewriting) {
+            sequenceOffset = numbering.sequenceOffset;
+            discontinuityOffset = numbering.discontinuityOffset;
+        }
+        nextSequence = playlist.mediaSequence + sequenceOffset;
+        discontinuityBase = playlist.discontinuitySequence + discontinuityOffset;
+        discontinuityBaseSequence = playlist.mediaSequence + sequenceOffset;
     }
 
     /** Twitch's segments as the player knows them (Twitch's numbers, shifted after a stitched stretch). */

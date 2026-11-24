@@ -20,7 +20,7 @@ public final class AdMarkers {
             "twitch-stitched",
             // vaft matches these only when CLASS is the first DATERANGE attribute; match any position.
             "CLASS=\"twitch-maf-ad\"",
-            "CLASS=\"twitch-trigger\"",
+            // (not twitch-trigger: every stream carries it from its start, ad or not, as Purple AdBlock found)
     };
 
     /** Always an ad. */
@@ -36,7 +36,7 @@ public final class AdMarkers {
      * markers are ad tracking beacons that can outlive the ad they belong to.
      */
     private static final Set<String> NON_AD_CLASSES = new HashSet<>(Arrays.asList(
-            "twitch-session", "twitch-stream-source", "twitch-assignment", "twitch-ad-quartile"));
+            "twitch-session", "twitch-stream-source", "twitch-assignment", "twitch-ad-quartile", "twitch-trigger"));
     private static final Set<String> AD_WORDS = new HashSet<>(Arrays.asList(
             "ad", "ads", "advert", "stitched", "maf", "break", "midroll", "preroll", "sponsor", "cue",
             "scte35", "splice", "commercial", "quartile", "trigger"));
@@ -95,13 +95,21 @@ public final class AdMarkers {
         StringBuilder out = new StringBuilder(text.length());
         boolean changed = false;
         for (String line : Lines.of(text)) {
-            if (isAdTagLine(line) || (dropPrefetch && MediaPlaylist.isPrefetchTag(line))) {
+            // The trigger marker stays: it isn't an ad (it's there all stream long, from its start), and the
+            // player is given its playlist as Twitch sent it outside ads, as Purple AdBlock does.
+            boolean adLine = isAdTagLine(line) && !isTriggerLine(line);
+            if (adLine || (dropPrefetch && MediaPlaylist.isPrefetchTag(line))) {
                 changed = true;
                 continue;
             }
             out.append(line).append('\n');
         }
         return changed ? out.toString() : text;
+    }
+
+    /** Twitch's trigger marker: a session marker every stream carries, not an ad. */
+    static boolean isTriggerLine(String line) {
+        return line.contains("CLASS=\"twitch-trigger\"") && !hasStitchedAdTags(line) && !line.contains("twitch-maf-ad");
     }
 
     /**

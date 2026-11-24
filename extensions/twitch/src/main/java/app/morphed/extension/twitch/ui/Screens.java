@@ -23,6 +23,8 @@ public final class Screens implements Application.ActivityLifecycleCallbacks {
     /** A new window is looked for this long after the activity's lost focus to it (it's being added then). */
     private static final long WINDOW_WAIT_MS = 300;
     private static WeakReference<Activity> resumed = new WeakReference<>(null);
+    /** Whether the screen last resumed has been paused since (it stays current() for the Settings rows). */
+    private static volatile boolean resumedPaused;
     private static boolean installed;
 
     private Screens() {
@@ -75,6 +77,7 @@ public final class Screens implements Application.ActivityLifecycleCallbacks {
     @Override
     public void onActivityResumed(Activity activity) {
         resumed = new WeakReference<>(activity);
+        resumedPaused = false;
         try {
             if (DebugMode.windowWanted(activity)) LogWindow.show(activity);
             watch(activity);
@@ -85,7 +88,10 @@ public final class Screens implements Application.ActivityLifecycleCallbacks {
 
     @Override
     public void onActivityPaused(Activity activity) {
-        if (resumed.get() == activity) LogWindow.hide();
+        if (resumed.get() == activity) {
+            resumedPaused = true; // (a layout pass after this must not bring the log window back)
+            LogWindow.hide();
+        }
         PlayerOverlay.paused(activity); // a screen lock ends when the screen goes
     }
 
@@ -137,7 +143,7 @@ public final class Screens implements Application.ActivityLifecycleCallbacks {
                     // another window of the activity: only the Options sheet is looked for there
                 } else if (android.os.Build.VERSION.SDK_INT >= 24 && activity.isInPictureInPictureMode()) {
                     LogWindow.hide();
-                } else if (DebugMode.windowWanted(activity) && activity == resumed.get()) {
+                } else if (DebugMode.windowWanted(activity) && activity == resumed.get() && !resumedPaused) {
                     LogWindow.show(activity);
                 }
                 try {
@@ -174,5 +180,6 @@ public final class Screens implements Application.ActivityLifecycleCallbacks {
     @Override
     public void onActivityDestroyed(Activity activity) {
         PlayerOptionsSection.closeSheet(activity); // its window goes with the screen
+        if (resumed.get() == activity) LogWindow.hide(); // (its views not held past the screen)
     }
 }
