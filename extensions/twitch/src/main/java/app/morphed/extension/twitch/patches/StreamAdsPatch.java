@@ -248,8 +248,9 @@ public final class StreamAdsPatch {
 
             @Override
             public void onBreakOver() {
+                // No player restart (as Purple AdBlock): the numbering goes on across the break, and a
+                // pause/play would itself stall the stream for a few seconds.
                 INDICATOR.hide();
-                PlayerRefresher.refreshPlayingPlayers();
             }
         };
         return new AdBlocker(backups, logger, System::currentTimeMillis, breaks, PROBLEMS);

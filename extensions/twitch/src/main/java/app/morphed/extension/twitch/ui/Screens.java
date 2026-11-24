@@ -23,7 +23,6 @@ public final class Screens implements Application.ActivityLifecycleCallbacks {
     /** A new window is looked for this long after the activity's lost focus to it (it's being added then). */
     private static final long WINDOW_WAIT_MS = 300;
     private static WeakReference<Activity> resumed = new WeakReference<>(null);
-    private static WeakReference<Activity> settings = new WeakReference<>(null);
     private static boolean installed;
 
     private Screens() {
@@ -45,21 +44,33 @@ public final class Screens implements Application.ActivityLifecycleCallbacks {
         return resumed.get();
     }
 
-    /** The Settings screen with the patches' rows composed on it (noted while they're built). */
+    /**
+     * The kind of screen the patches' Settings rows are on (noted while they're built, when that screen is the one
+     * resumed). Kept by its class, not the screen itself: each refresh rebuilds that screen as a new one.
+     */
     public static void noteSettings() {
         Activity activity = resumed.get();
-        if (activity != null) settings = new WeakReference<>(activity);
+        if (activity != null && isSettingsScreen(activity.getClass().getName(), null)) {
+            settingsClass = activity.getClass().getName();
+        }
     }
 
-    /** The rows' texts are read when Settings is built: rebuilt so they show what changed. */
+    /** The rows' texts are read when Settings is built: the Settings screen, if it's the one shown, is rebuilt. */
     public static void refreshSettingsRows() {
-        Activity activity = settings.get(), now = resumed.get();
-        if (now == null || now.isFinishing() || activity == null) return;
-        // After a rebuild the rows are noted while the old screen still counts as resumed: the noted one is then
-        // that destroyed screen, and the new one of its kind is the one showing the rows.
-        boolean same = activity == now || (activity.isDestroyed() && activity.getClass() == now.getClass());
-        if (same) now.recreate();
+        Activity now = resumed.get();
+        if (now == null || now.isFinishing() || now.isDestroyed()) return;
+        if (isSettingsScreen(now.getClass().getName(), settingsClass)) now.recreate();
     }
+
+    /** Whether a screen of this class shows the Settings rows (never the player's: it mustn't be rebuilt). */
+    static boolean isSettingsScreen(String className, String noted) {
+        if (className == null) return false;
+        if (className.equals(noted)) return true;
+        int dot = className.lastIndexOf('.');
+        return className.substring(dot + 1).endsWith("SettingsActivity");
+    }
+
+    private static volatile String settingsClass;
 
     @Override
     public void onActivityResumed(Activity activity) {
@@ -76,12 +87,6 @@ public final class Screens implements Application.ActivityLifecycleCallbacks {
     public void onActivityPaused(Activity activity) {
         if (resumed.get() == activity) LogWindow.hide();
         PlayerOverlay.paused(activity); // a screen lock ends when the screen goes
-        // Left Settings: its rows aren't on screen, nothing to rebuild (the player's screen must never be).
-        Activity noted = settings.get();
-        // (also the one a rebuild left behind: destroyed, of the same kind as the one leaving now)
-        if (noted == activity || (noted != null && noted.isDestroyed() && noted.getClass() == activity.getClass())) {
-            settings = new WeakReference<>(null);
-        }
     }
 
     private static void watch(Activity activity) {

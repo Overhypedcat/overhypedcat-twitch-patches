@@ -479,6 +479,103 @@ public class AdBlockerTest {
     }
 
     @Test
+    public void markersAloneLeaveTwitchsPlaylistAsItIsButForTheMarkers() {
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+        String marked = Playlists.media("n", 101, "llll", true);
+
+        String out = blocker.process(NATIVE_1080, marked);
+
+        assertFalse("the app mustn't start its own ad", out.contains("stitched-ad"));
+        assertTrue("Twitch's numbering", out.contains("#EXT-X-MEDIA-SEQUENCE:101"));
+        assertTrue("the low latency hint stays: without it one slow playlist stalls the player",
+                out.contains("#EXT-X-TWITCH-PREFETCH:" + Playlists.segment("n", 105)));
+        assertEquals("nothing else changed", marked.replace(Playlists.AD_DATERANGE + "\n", ""), out);
+    }
+
+    @Test
+    public void aBreakAnnouncedAheadTakesThePrefetchHints() {
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+        // a stitched break starting after the newest segment (101..104: 12:03:22..12:03:28)
+        String ahead = Playlists.media("n", 101, "llll", false).replace("#EXT-X-TWITCH-ELAPSED-SECS:100.0\n",
+                "#EXT-X-TWITCH-ELAPSED-SECS:100.0\n" + Playlists.AD_DATERANGE.replace("2026-10-28T12:00:00.000Z",
+                        "2026-10-28T12:03:40.000Z") + "\n");
+
+        String out = blocker.process(NATIVE_1080, ahead);
+
+        assertFalse("its first ad segments mustn't be fetched early", out.contains("#EXT-X-TWITCH-PREFETCH"));
+        assertTrue(out.contains("#EXT-X-MEDIA-SEQUENCE:101"));
+    }
+
+    @Test
+    public void afterABreakThePlayerGetsTwitchsOwnPlaylistAgain() {
+        backupHasAds("site", false);
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+        blocker.process(NATIVE_1080, Playlists.media("n", 101, "llaa", true)); // the ad: from the backup
+        blocker.process(NATIVE_1080, Playlists.media("n", 103, "llll", false)); // clean once
+        blocker.process(NATIVE_1080, Playlists.media("n", 104, "llll", false)); // clean twice: the break is over
+        assertTrue(notices.contains("over"));
+
+        String stitched = blocker.process(NATIVE_1080, Playlists.media("n", 105, "llll", false));
+        String clean = Playlists.media("n", 106, "llll", false);
+        String back = blocker.process(NATIVE_1080, clean);
+
+        // Twitch's own playlist again: its low latency hint and every segment, in Twitch's order...
+        assertTrue(back.contains("#EXT-X-TWITCH-PREFETCH:" + Playlists.segment("n", 110)));
+        for (long s = 106; s <= 109; s++) assertTrue(back.contains(Playlists.segment("n", s)));
+        // ...and each segment keeps the number the player knows it by: no jump, nothing played twice or skipped.
+        assertSameNumbers(stitched, back);
+        stitchedNumbersGoOn(back, blocker.process(NATIVE_1080, Playlists.media("n", 107, "llll", false)));
+    }
+
+    @Test
+    public void afterACutBreakTheNumberingGoesOnWithoutAJump() {
+        // No backup: the ad is cut out, so Twitch's numbers end up ahead of the player's.
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+        blocker.process(NATIVE_1080, Playlists.media("n", 101, "llaa", true));
+        blocker.process(NATIVE_1080, Playlists.media("n", 103, "aall", true));
+        blocker.process(NATIVE_1080, Playlists.media("n", 105, "llll", false));
+        String stitched = blocker.process(NATIVE_1080, Playlists.media("n", 106, "llll", false));
+        String back = blocker.process(NATIVE_1080, Playlists.media("n", 107, "llll", false));
+
+        assertSameNumbers(stitched, back);
+        assertFalse("never a smaller discontinuity sequence", discontinuitySequence(back) < discontinuitySequence(stitched));
+    }
+
+    /** Segment URIs to the numbers a playlist gives them. */
+    private static java.util.Map<String, Long> numbers(String playlist) {
+        java.util.Map<String, Long> out = new java.util.HashMap<>();
+        long next = -1;
+        for (String line : playlist.split("\n")) {
+            if (line.startsWith("#EXT-X-MEDIA-SEQUENCE:")) next = Long.parseLong(line.substring(22).trim());
+            else if (!line.isEmpty() && !line.startsWith("#")) out.put(line, next++);
+        }
+        return out;
+    }
+
+    private static long discontinuitySequence(String playlist) {
+        for (String line : playlist.split("\n")) {
+            if (line.startsWith("#EXT-X-DISCONTINUITY-SEQUENCE:")) return Long.parseLong(line.substring(30).trim());
+        }
+        return 0;
+    }
+
+    private static void assertSameNumbers(String before, String after) {
+        java.util.Map<String, Long> was = numbers(before), now = numbers(after);
+        int shared = 0;
+        for (java.util.Map.Entry<String, Long> e : now.entrySet()) {
+            Long earlier = was.get(e.getKey());
+            if (earlier == null) continue;
+            shared++;
+            assertEquals("segment " + e.getKey(), earlier, e.getValue());
+        }
+        assertTrue("the two playlists share segments", shared > 0);
+    }
+
+    private static void stitchedNumbersGoOn(String before, String after) {
+        assertSameNumbers(before, after);
+    }
+
+    @Test
     public void followsAStreamMovedToAnotherPlaylistServer() {
         backupHasAds("site", false);
         blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));

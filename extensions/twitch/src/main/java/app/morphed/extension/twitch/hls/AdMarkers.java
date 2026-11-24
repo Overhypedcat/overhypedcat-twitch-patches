@@ -67,6 +67,43 @@ public final class AdMarkers {
         return text.contains("stitched-ad") || text.contains("twitch-stitched") || text.contains("EXT-X-CUE-OUT");
     }
 
+    private static final java.util.regex.Pattern START_DATE = java.util.regex.Pattern.compile("START-DATE=\"([^\"]+)\"");
+
+    /**
+     * Whether a stitched ad break is announced to start after the newest segment (its start {@code newestMs}, epoch
+     * ms): the prefetch hints then point at the break's first ad segments, so they go. A break announced without a
+     * readable start, or one that has begun, doesn't count: its ad segments, once there, say so themselves.
+     */
+    public static boolean breakAhead(String text, long newestMs) {
+        if (newestMs == MediaPlaylist.UNKNOWN_TIME || !hasStitchedAdTags(text)) return false;
+        for (String line : Lines.of(text)) {
+            if (!line.startsWith("#EXT-X-DATERANGE") || !hasStitchedAdTags(line)) continue;
+            java.util.regex.Matcher start = START_DATE.matcher(line);
+            if (!start.find()) continue;
+            long at = MediaPlaylist.parseTime(start.group(1));
+            if (at != MediaPlaylist.UNKNOWN_TIME && at > newestMs) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Twitch's playlist as it is, without the lines that tell the app an ad is on (it would start its own), and
+     * without the prefetch hints when {@code dropPrefetch}. Everything else (numbering, low latency hints, parts)
+     * stays exactly as Twitch sent it.
+     */
+    public static String withoutAdTags(String text, boolean dropPrefetch) {
+        StringBuilder out = new StringBuilder(text.length());
+        boolean changed = false;
+        for (String line : Lines.of(text)) {
+            if (isAdTagLine(line) || (dropPrefetch && MediaPlaylist.isPrefetchTag(line))) {
+                changed = true;
+                continue;
+            }
+            out.append(line).append('\n');
+        }
+        return changed ? out.toString() : text;
+    }
+
     /**
      * A tag line that tells the app an ad is playing. Dropped from rewritten playlists so the app
      * does not start its own (client side) ad.

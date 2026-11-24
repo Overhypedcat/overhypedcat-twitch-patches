@@ -45,7 +45,7 @@ public final class AdBlocker {
     private static final Pattern TOKEN_PARAMETER = Pattern.compile("[?&]token=([^&]+)");
     private static final Pattern PLAYER_TYPE = Pattern.compile("\"player_type\"\\s*:\\s*\"([^\"]+)\"");
 
-    /** Follows ad breaks, for the on-screen notice and the post-break player refresh. */
+    /** Follows ad breaks, for the on-screen notice. */
     public interface BreakListener {
         BreakListener NONE = new BreakListener() {
             @Override
@@ -65,7 +65,7 @@ public final class AdBlocker {
          */
         void onBlocking(String quality);
 
-        /** The ad segments are gone and the original stream plays again; the player may need a refresh. */
+        /** The ad segments are gone and the original stream plays again. */
         void onBreakOver();
     }
 
@@ -351,19 +351,27 @@ public final class AdBlocker {
         // Ad markers can stay in the playlist a while after the ad itself, so the break follows the
         // ad segments. It ends after two clean polls in a row, so a single clean window (for example
         // between two ads) does not end it and start it again moments later.
-        String output = stitcher.process(playlist, body, PlaylistStitcher.NATIVE);
-        if (quality.swappingAds && ++quality.cleanPolls >= 2) {
+        if (quality.swappingAds) {
+            // Still in this quality's break: stitched on until it's over, so the player's numbering carries on.
+            String output = stitcher.process(playlist, body, PlaylistStitcher.NATIVE);
             // Another quality still in the break (polled moments ago) keeps it open: the label and
             // the player refresh wait for the break as a whole to end.
-            if (session.endAdSwap(url, clock.getAsLong())) {
+            if (++quality.cleanPolls >= 2 && session.endAdSwap(url, clock.getAsLong())) {
                 logger.log("Ad break over on " + session.channel);
                 breaks.onBreakOver();
             }
-        } else if (!quality.swappingAds && session.endLeftBreaks(clock.getAsLong())) {
+            return output;
+        }
+        if (session.endLeftBreaks(clock.getAsLong())) {
             // The player switched to this (clean) quality during the break and left the other one.
             logger.log("Ad break over on " + session.channel + " (quality changed)");
             breaks.onBreakOver();
         }
+        // No ad on this quality: Twitch's own playlist, only its ad markers taken out (a break announced ahead
+        // takes the prefetch hints too). Its numbering, low latency hints and parts stay as Twitch sent them.
+        boolean wasStitched = stitcher.isRewriting();
+        String output = stitcher.passThrough(playlist, body);
+        if (wasStitched) logger.log("Back to Twitch's own playlist on " + session.channel);
         return output;
     }
 
