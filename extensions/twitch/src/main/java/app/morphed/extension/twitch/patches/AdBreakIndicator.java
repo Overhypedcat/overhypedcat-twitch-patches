@@ -207,23 +207,11 @@ final class AdBreakIndicator {
      * being left, a toast would land over other apps or the main page. One per break (see ToastThrottle).
      */
     private boolean fallbackToast(String text, boolean duringBreak) {
-        if (resumedActivity.get() == null) {
-            DebugLog.log("No message for \"" + text + "\": Twitch is not in front");
-            return false;
-        }
-        // Already told during this break.
-        if (!toasts.allow(duringBreak)) return true;
-        Application app = currentApplication();
-        if (app == null) {
-            problems.report(Problem.LABEL_FAILED, "no screen to show \"" + text + "\" on");
-            return false;
-        }
-        // Only called after hideNow(): no label is on screen while the toast shows.
-        dismissToast();
-        toast = Toast.makeText(app, text, Toast.LENGTH_SHORT);
-        toast.show();
-        DebugLog.log("Shown as a message instead: " + text);
-        return true;
+        // Do not show a system toast when the stream's video is not visible. This commonly happens
+        // while leaving the player or minimizing Twitch; the old fallback could show "Ad blocked"
+        // over the home screen after the stream had already been closed.
+        DebugLog.log("No message for \"" + text + "\": the stream's video is not visible");
+        return false;
     }
 
     private void dismissToast() {
