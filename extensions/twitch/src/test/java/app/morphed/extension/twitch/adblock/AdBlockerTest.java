@@ -20,6 +20,7 @@ public class AdBlockerTest {
             + "?allow_source=true&token=app-token&sig=app-sig&player_backend=mediaplayer";
     private static final String NATIVE_1080 = "https://weaver.example/native-1080.m3u8";
     private static final String NATIVE_720 = "https://weaver.example/native-720.m3u8";
+    private static final String NATIVE_480 = "https://weaver.example/native-480.m3u8";
 
     private final FakeHttp http = new FakeHttp();
     private long now = 1_000_000;
@@ -233,6 +234,52 @@ public class AdBlockerTest {
         String later = blocker.process(NATIVE_1080, Playlists.media("n", 103, "laaa", true));
         assertTrue(later.contains(Playlists.segment("site", 105)));
         assertFalse(later.contains(Playlists.segment("site", 104)));
+    }
+
+    @Test
+    public void usesTheClean720pOfAPlayerTypeBeforeFallingBackTo360p() {
+        http.getResponses.put("site-1080.m3u8", Playlists.media("site1080", 101, "llaa", true));
+        http.getResponses.put("site-720.m3u8", Playlists.media("site720", 101, "llll", false));
+        http.getResponses.put("sig=sig-autoplay&", "#EXTM3U\n"
+                + "#EXT-X-STREAM-INF:RESOLUTION=640x360\nhttps://weaver.example/autoplay-360.m3u8\n");
+        http.getResponses.put("autoplay-360.m3u8", Playlists.media("autoplay360", 101, "llll", false));
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+
+        String out = blocker.process(NATIVE_1080, Playlists.media("n", 102, "llaa", true));
+
+        assertTrue(out.contains(Playlists.segment("site720", 104)));
+        assertFalse(out.contains(Playlists.segment("autoplay360", 104)));
+    }
+
+    @Test
+    public void aPlayerLeftOnALowQualityStillGetsA720pBackup() {
+        http.getResponses.put("site-1080.m3u8", Playlists.media("site1080", 101, "llaa", true));
+        http.getResponses.put("site-720.m3u8", Playlists.media("site720", 101, "llll", false));
+        // The player is on the 480p variant (as Auto often is) while the stream itself is 1080p.
+        blocker.process(MASTER_URL, Playlists.master(NATIVE_1080, NATIVE_720, NATIVE_480));
+        blocker.process(NATIVE_480, Playlists.media("n480", 100, "llll", false));
+
+        String out = blocker.process(NATIVE_480, Playlists.media("n480", 102, "llaa", true));
+
+        assertTrue(out.contains(Playlists.segment("site720", 104)));
+        assertFalse(out.contains(Playlists.segment("site1080", 104)));
+    }
+
+    @Test
+    public void replacesA720pBackupWithA1080pOneThatArrivesLater() throws Exception {
+        http.getResponses.put("site-1080.m3u8", Playlists.media("site1080", 101, "llaa", true));
+        http.getResponses.put("site-720.m3u8", Playlists.media("site720", 101, "llll", false));
+        http.getResponses.put("embed-1080.m3u8", Playlists.media("embed1080", 103, "llll", false));
+        http.delays.put("embed-1080.m3u8", 2_500L);
+        blocker.process(NATIVE_1080, Playlists.media("n", 100, "llll", false));
+
+        String first = blocker.process(NATIVE_1080, Playlists.media("n", 102, "llaa", true));
+        assertTrue(first.contains(Playlists.segment("site720", 104)));
+
+        Thread.sleep(3_000);
+        http.delays.clear();
+        String later = blocker.process(NATIVE_1080, Playlists.media("n", 103, "laaa", true));
+        assertTrue(later.contains(Playlists.segment("embed1080", 105)));
     }
 
     @Test
