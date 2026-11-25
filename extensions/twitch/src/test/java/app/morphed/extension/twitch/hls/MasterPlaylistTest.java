@@ -2,10 +2,13 @@ package app.morphed.extension.twitch.hls;
 
 import org.junit.Test;
 
+import java.util.List;
+
 import app.morphed.extension.twitch.Playlists;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 public class MasterPlaylistTest {
     @Test
@@ -57,5 +60,71 @@ public class MasterPlaylistTest {
                 "#EXT-X-STREAM-INF:BANDWIDTH=160000\nhttps://a/audio.m3u8\n").variants.get(0);
 
         assertEquals("https://b/audio.m3u8", master.closestTo(target).url);
+    }
+
+    @Test
+    public void backupCandidatesTryTheTargetThen720p() {
+        MasterPlaylist master = MasterPlaylist.parse("#EXTM3U\n"
+                + "#EXT-X-STREAM-INF:RESOLUTION=1920x1080,FRAME-RATE=60.000\nhttps://b/1080p60.m3u8\n"
+                + "#EXT-X-STREAM-INF:RESOLUTION=1280x720,FRAME-RATE=60.000\nhttps://b/720p60.m3u8\n"
+                + "#EXT-X-STREAM-INF:RESOLUTION=852x480\nhttps://b/480p.m3u8\n"
+                + "#EXT-X-STREAM-INF:RESOLUTION=640x360\nhttps://b/360p.m3u8\n");
+        MasterPlaylist.Variant target = MasterPlaylist.parse(
+                "#EXT-X-STREAM-INF:RESOLUTION=1920x1080,FRAME-RATE=60\nhttps://a/1080p60.m3u8\n").variants.get(0);
+
+        List<MasterPlaylist.Variant> candidates = master.backupCandidates(target, 1080, 720);
+
+        assertEquals(2, candidates.size());
+        assertEquals("https://b/1080p60.m3u8", candidates.get(0).url);
+        assertEquals("https://b/720p60.m3u8", candidates.get(1).url);
+    }
+
+    @Test
+    public void backupCandidatesDoNotFallTo360pForA1080pTarget() {
+        MasterPlaylist master = MasterPlaylist.parse("#EXTM3U\n"
+                + "#EXT-X-STREAM-INF:RESOLUTION=852x480\nhttps://b/480p.m3u8\n"
+                + "#EXT-X-STREAM-INF:RESOLUTION=640x360\nhttps://b/360p.m3u8\n");
+        MasterPlaylist.Variant target = MasterPlaylist.parse(
+                "#EXT-X-STREAM-INF:RESOLUTION=1920x1080\nhttps://a/1080p.m3u8\n").variants.get(0);
+
+        assertTrue(master.backupCandidates(target, 1080, 720).isEmpty());
+    }
+
+    @Test
+    public void backupCandidatesPrefer720pOver360pForA480pTarget() {
+        MasterPlaylist master = MasterPlaylist.parse("#EXTM3U\n"
+                + "#EXT-X-STREAM-INF:RESOLUTION=1280x720\nhttps://b/720p.m3u8\n"
+                + "#EXT-X-STREAM-INF:RESOLUTION=640x360\nhttps://b/360p.m3u8\n");
+        MasterPlaylist.Variant target = MasterPlaylist.parse(
+                "#EXT-X-STREAM-INF:RESOLUTION=852x480\nhttps://a/480p.m3u8\n").variants.get(0);
+
+        List<MasterPlaylist.Variant> candidates = master.backupCandidates(target, 480, 480);
+
+        assertEquals(1, candidates.size());
+        assertEquals("https://b/720p.m3u8", candidates.get(0).url);
+    }
+
+    @Test
+    public void aPlayerOn360pStillLooksForA720pBackup() {
+        MasterPlaylist master = MasterPlaylist.parse("#EXTM3U\n"
+                + "#EXT-X-STREAM-INF:RESOLUTION=1920x1080\nhttps://b/1080p.m3u8\n"
+                + "#EXT-X-STREAM-INF:RESOLUTION=1280x720\nhttps://b/720p.m3u8\n"
+                + "#EXT-X-STREAM-INF:RESOLUTION=640x360\nhttps://b/360p.m3u8\n");
+        MasterPlaylist.Variant target = MasterPlaylist.parse(
+                "#EXT-X-STREAM-INF:RESOLUTION=640x360\nhttps://a/360p.m3u8\n").variants.get(0);
+
+        List<MasterPlaylist.Variant> candidates = master.backupCandidates(target, 720, 720);
+
+        assertEquals(1, candidates.size());
+        assertEquals("https://b/720p.m3u8", candidates.get(0).url);
+    }
+
+    @Test
+    public void bestHeightIgnoresAudioOnlyVariants() {
+        MasterPlaylist master = MasterPlaylist.parse("#EXTM3U\n"
+                + "#EXT-X-STREAM-INF:RESOLUTION=1280x720\nhttps://b/720p.m3u8\n"
+                + "#EXT-X-STREAM-INF:CODECS=\"mp4a.40.2\"\nhttps://b/audio.m3u8\n");
+
+        assertEquals(720, master.bestHeight());
     }
 }
