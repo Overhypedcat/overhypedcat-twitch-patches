@@ -224,6 +224,9 @@ public final class BackupStreamFinder {
      */
     private Result search(StreamSession session, MasterPlaylist.Variant target) {
         String key = UrlKey.of(target.url);
+        int[] bounds = qualityBounds(session, target);
+        int desiredHeight = bounds[0];
+        int minHeight = bounds[1];
         int generation = session.breakGeneration.get();
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SEARCH_BUDGET_MS);
         CompletionService<Attempt> completions = new ExecutorCompletionService<>(EXECUTOR);
@@ -234,7 +237,7 @@ public final class BackupStreamFinder {
             Long failedAt = session.failedPlayerTypes.get(playerType);
             if (failedAt != null && clock.getAsLong() - failedAt < FAILED_TYPE_RETRY_MS) continue;
             String cachedMaster = session.backupMasters.get(playerType);
-            Future<Attempt> future = completions.submit(() -> attempt(session, cachedMaster, target, playerType));
+            Future<Attempt> future = completions.submit(() -> attempt(session, cachedMaster, target, playerType, desiredHeight, minHeight));
             rankOf.put(future, rank);
             futures.add(future);
         }
@@ -285,7 +288,7 @@ public final class BackupStreamFinder {
             if (attempt.master != null) session.backupMasters.put(playerType, attempt.master);
             else session.backupMasters.remove(playerType);
 
-            if (attempt.result != null && rank < bestRank) {
+            if (attempt.result != null && isBetter(attempt.result, rank, best, bestRank)) {
                 best = attempt.result;
                 bestRank = rank;
                 session.backupResults.put(key, best);
@@ -300,8 +303,10 @@ public final class BackupStreamFinder {
             } else if (attempt.result == null && !attempt.failed) {
                 logger.log("Backup " + playerType + " also has ads");
             }
-            // Done once nothing better can still come in.
-            if (best != null && allDone(done, bestRank)) break;
+            // Done once the wanted quality is in and no better-ranked type can still come in,
+            // or once every type has answered (a lower type may still offer a higher resolution).
+            if (best != null && ((reachesHeight(best, desiredHeight) && allDone(done, bestRank))
+                    || allDone(done, PLAYER_TYPES.size()))) break;
         }
         for (Future<Attempt> future : futures) future.cancel(true);
 
@@ -323,7 +328,50 @@ public final class BackupStreamFinder {
         return true;
     }
 
-    private Attempt attempt(StreamSession session, String cachedMaster, MasterPlaylist.Variant target, String playerType) {
+    /** A higher resolution wins; at the same height the better-ranked player type wins. */
+    private static boolean isBetter(Result candidate, int candidateRank, Result current, int currentRank) {
+        if (current == null) return true;
+        int candidateHeight = heightOf(candidate.resolution);
+        int currentHeight = heightOf(current.resolution);
+        if (candidateHeight != currentHeight) return candidateHeight > currentHeight;
+        return candidateRank < currentRank;
+    }
+
+    /** Whether {@code result} is at least {@code height} pixels tall. */
+    private static boolean reachesHeight(Result result, int height) {
+        if (result == null) return false;
+        if (height <= 0) return result.resolution == null;
+        return heightOf(result.resolution) >= height;
+    }
+
+    /**
+     * The quality to look for and the lowest acceptable one, both derived from the stream's own
+     * master playlist: the player may be on Auto at 360p while the stream is 1080p, and a backup
+     * should then still be 720p instead of matching the 360p the player happens to be on.
+     */
+    private static int[] qualityBounds(StreamSession session, MasterPlaylist.Variant target) {
+        int targetHeight = target.height();
+        if (target.resolution == null) return new int[]{targetHeight, targetHeight};
+        int nativeBest = session.master == null ? -1 : session.master.bestHeight();
+        int highest = nativeBest > 0 ? nativeBest : targetHeight;
+        int minHeight = Math.min(720, highest);
+        int desiredHeight = Math.min(Math.max(targetHeight, minHeight), highest);
+        return new int[]{desiredHeight, minHeight};
+    }
+
+    private static int heightOf(String resolution) {
+        if (resolution == null) return -1;
+        int x = resolution.indexOf('x');
+        if (x < 0) return -1;
+        try {
+            return Integer.parseInt(resolution.substring(x + 1));
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
+    private Attempt attempt(StreamSession session, String cachedMaster, MasterPlaylist.Variant target,
+                            String playerType, int desiredHeight, int minHeight) {
         Attempt attempt = new Attempt();
         String master = cachedMaster;
         // A cached master playlist can expire; only then is it worth asking for a fresh token.
@@ -341,8 +389,9 @@ public final class BackupStreamFinder {
             }
             attempt.master = master;
 
-            MasterPlaylist.Variant variant = MasterPlaylist.parse(master).closestTo(target);
-            if (variant == null) {
+            List<MasterPlaylist.Variant> candidates = MasterPlaylist.parse(master)
+                    .backupCandidates(target, desiredHeight, minHeight);
+            if (candidates.isEmpty()) {
                 // Audio only: this type simply has no audio rendition, the master stays good.
                 if (target.resolution == null) return attempt;
                 // A cached master may be an old or odd one: ask for a fresh one before giving up.
@@ -350,20 +399,28 @@ public final class BackupStreamFinder {
                     master = null;
                     continue;
                 }
-                // No video quality at all: not a usable master playlist, so neither an ad nor worth keeping.
+                // No video quality at or above the minimum: not a usable master playlist, so neither
+                // an ad nor worth keeping.
                 attempt.master = null;
                 attempt.failed = true;
-                attempt.error = playerType + ": no video quality in its master playlist";
-                return attempt;
-            }
-            String url = resolve(session.masterUrl, variant.url);
-            String playlist = fetchPlaylist(url);
-            if (playlist != null) {
-                if (isClean(playlist)) attempt.result = new Result(playerType, playlist, url, variant.resolution, target.url);
+                attempt.error = playerType + ": no video quality at or above the minimum";
                 return attempt;
             }
 
-            // The media playlist could not be loaded: the cached master has expired.
+            boolean loaded = false;
+            for (MasterPlaylist.Variant variant : candidates) {
+                String url = resolve(session.masterUrl, variant.url);
+                String playlist = fetchPlaylist(url);
+                if (playlist == null) continue;
+                loaded = true;
+                if (isClean(playlist)) {
+                    attempt.result = new Result(playerType, playlist, url, variant.resolution, target.url);
+                    return attempt;
+                }
+            }
+            if (loaded) return attempt; // the master is good; every candidate had ads
+
+            // The media playlists could not be loaded: the cached master has expired.
             attempt.master = null;
             master = null;
             if (fresh) {
