@@ -33,6 +33,18 @@ public final class MasterPlaylist {
                 return -1;
             }
         }
+
+        /** Height in pixels, or -1 for audio only. */
+        public int height() {
+            if (resolution == null) return -1;
+            int x = resolution.indexOf('x');
+            if (x < 0) return -1;
+            try {
+                return Integer.parseInt(resolution.substring(x + 1));
+            } catch (NumberFormatException e) {
+                return -1;
+            }
+        }
     }
 
     public final List<Variant> variants;
@@ -92,6 +104,85 @@ public final class MasterPlaylist {
             }
         }
         return sameResolution != null ? sameResolution : closest;
+    }
+
+    /** The highest video height in this playlist, or -1 when it only has audio. */
+    public int bestHeight() {
+        int best = -1;
+        for (Variant variant : variants) {
+            best = Math.max(best, variant.height());
+        }
+        return best;
+    }
+
+    /**
+     * Variants to try as a backup for a player on {@code reference}, best first.
+     *
+     * <p>{@code desiredHeight} is the quality to look for and {@code minHeight} the lowest one that
+     * is still acceptable; both come from the stream's own master playlist, not only from the
+     * quality the player happens to be on. That way a player left on Auto at 360p still gets a 720p
+     * backup when the stream offers one, and a 1080p player falls back to 720p instead of 360p.
+     */
+    public List<Variant> backupCandidates(Variant reference, int desiredHeight, int minHeight) {
+        if (reference.resolution == null) {
+            Variant audio = closestTo(reference);
+            return audio == null ? Collections.emptyList() : Collections.singletonList(audio);
+        }
+        List<Variant> candidates = new ArrayList<>();
+        for (Variant variant : variants) {
+            if (variant.height() == desiredHeight) candidates.add(variant);
+        }
+        candidates.sort((a, b) -> compareFrameRate(a, b, reference.frameRate));
+        if (desiredHeight > 720) {
+            List<Variant> at720 = new ArrayList<>();
+            for (Variant variant : variants) {
+                if (variant.height() == 720) at720.add(variant);
+            }
+            at720.sort((a, b) -> compareFrameRate(a, b, reference.frameRate));
+            candidates.addAll(at720);
+        }
+        if (candidates.isEmpty()) {
+            Variant closest = closestAtLeast(minHeight, desiredHeight);
+            if (closest != null) candidates.add(closest);
+        }
+        List<Variant> usable = new ArrayList<>();
+        for (Variant variant : candidates) {
+            if (variant.height() >= minHeight && !usable.contains(variant)) usable.add(variant);
+        }
+        return usable.size() > 3 ? new ArrayList<>(usable.subList(0, 3)) : usable;
+    }
+
+    private static int compareFrameRate(Variant a, Variant b, String targetFrameRate) {
+        boolean aExact = equalFrameRate(a.frameRate, targetFrameRate);
+        boolean bExact = equalFrameRate(b.frameRate, targetFrameRate);
+        if (aExact != bExact) return aExact ? -1 : 1;
+        return Double.compare(frameRate(b.frameRate), frameRate(a.frameRate));
+    }
+
+    private static double frameRate(String value) {
+        if (value == null) return 0;
+        try {
+            return Double.parseDouble(value);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /** The variant closest in height to {@code desiredHeight}, never below {@code minHeight}, or null. */
+    private Variant closestAtLeast(int minHeight, int desiredHeight) {
+        Variant closest = null;
+        long closestDifference = Long.MAX_VALUE;
+        for (Variant variant : variants) {
+            int height = variant.height();
+            if (height < minHeight) continue;
+            long difference = Math.abs((long) height - desiredHeight);
+            if (difference < closestDifference
+                    || (difference == closestDifference && closest != null && height < closest.height())) {
+                closestDifference = difference;
+                closest = variant;
+            }
+        }
+        return closest;
     }
 
     private static boolean equalFrameRate(String a, String b) {
