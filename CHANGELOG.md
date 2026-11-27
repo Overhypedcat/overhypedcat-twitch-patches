@@ -1,3 +1,9 @@
+## [4.3.3-dev.1](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v4.3.2...v4.3.3-dev.1) (2026-11-27)
+
+### Bug Fixes
+
+* Screen lock hides the controls' panel at once, and song removal problems stay in their pill ([599d702](https://github.com/[secure]/overhypedcat-twitch-patches/commit/599d7020f57477f7766b270a7519623875a57cfe))
+
 ## [4.3.2](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v4.3.1...v4.3.2) (2026-11-24)
 
 ### Bug Fixes
