@@ -1,3 +1,9 @@
+## [4.3.3-dev.2](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v4.3.3-dev.1...v4.3.3-dev.2) (2026-11-27)
+
+### Bug Fixes
+
+* Screen lock no longer flickers, review fixes across the ad blocker, VPN and song removal, and lighter song removal ([fbfa345](https://github.com/[secure]/overhypedcat-twitch-patches/commit/fbfa345d79475bfd41a832da8d9ed6fdade54c0e))
+
 ## [4.3.3-dev.1](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v4.3.2...v4.3.3-dev.1) (2026-11-27)
 
 ### Bug Fixes
