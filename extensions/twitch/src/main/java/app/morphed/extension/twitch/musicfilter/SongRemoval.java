@@ -3,7 +3,6 @@ package app.morphed.extension.twitch.musicfilter;
 import android.content.Context;
 import android.media.MediaFormat;
 import android.util.Log;
-import android.widget.Toast;
 
 import java.io.File;
 import java.lang.reflect.Field;
@@ -36,7 +35,6 @@ import app.morphed.extension.twitch.settings.PatchSettings;
 public final class SongRemoval {
     static final long LATENCY_US = (Canceller.DELAY + Canceller.HOP) * 1_000_000L / Canceller.RATE;
     private static final int QUEUE = 16384;
-    private static final long PROBLEM_TOAST_GAP_MS = 20_000;
     private static final long STALE_MS = 3_000;
     /** A session heard nothing for this long (the stream was left, or paused): ended, its song's copy let go. */
     private static final long IDLE_MS = 3 * 60_000;
@@ -87,8 +85,6 @@ public final class SongRemoval {
     static volatile String soundProblem;
     /** The songs can't be kept (storage): stays true for the launch, shown whenever nothing else is. */
     static volatile String libraryProblem;
-    private static String lastToast;
-    private static long lastToastAt;
 
     static {
         PatchSettings.addListener((key, on) -> {
@@ -179,7 +175,6 @@ public final class SongRemoval {
         Session current = session;
         if (current != null) {
             current.refresh();
-            toast(text);
         } else {
             problem(text);
         }
@@ -494,10 +489,9 @@ public final class SongRemoval {
             made.onProblem((text, lasting) -> { // told once a launch: in the Options and on screen, never dropped
                 Session current = session;
                 if (lasting) libraryProblem = text; // stays true: shown whenever nothing else is
-                if (current == null) problem(text, false);
+                if (current == null) problem(text);
                 else if (lasting) current.refresh();
-                else current.told(text, false, 0);
-                toast(text, true); // the one toast
+                else current.told(text, 0);
             });
             synchronized (SongRemoval.class) {
                 library = made;
@@ -625,11 +619,11 @@ public final class SongRemoval {
 
         @Override
         public void problem(String text, double countdown) {
-            told(text, true, countdown);
+            told(text, countdown);
         }
 
-        /** toast: also shown on screen (false: the caller shows it). */
-        synchronized void told(String text, boolean toast, double countdown) {
+        /** A problem of this session (null: fine again), shown in the song pill and the Options. */
+        synchronized void told(String text, double countdown) {
             long endsAt = text == null ? 0 : endsAt(countdown);
             boolean same = text == null ? problem == null : text.equals(problem);
             if (unchanged(problem, problemEndsAt, text, endsAt)) return;
@@ -637,7 +631,6 @@ public final class SongRemoval {
             problemEndsAt = endsAt;
             if (!same) DebugLog.log("Song removal: " + (text == null ? "fine again" : "PROBLEM " + text));
             update();
-            if (!same && toast && text != null && running && session == this) SongRemoval.toast(text);
         }
 
         @Override
@@ -670,37 +663,13 @@ public final class SongRemoval {
         });
     }
 
-    /** A problem outside a session (format, a broken renderer): told in the Options and on screen. */
+    /**
+     * A problem outside a session (format, a broken renderer): told in the song pill and the Options (never as a
+     * toast: that would cover the stream).
+     */
     private static void problem(String text) {
-        problem(text, true);
-    }
-
-    private static void problem(String text, boolean toast) {
         DebugLog.log("Song removal: PROBLEM " + text);
         Status now = status;
         publish(new Status(now.filtering, now.step, now.stepEndsAt, text, 0));
-        if (toast) toast(text);
-    }
-
-    /** Problems are shown on screen, the same one not again within a while. */
-    private static void toast(String text) {
-        toast(text, false);
-    }
-
-    /** always: a message told only once, shown even right after another. */
-    private static void toast(String text, boolean always) {
-        synchronized (SongRemoval.class) {
-            long now = System.currentTimeMillis();
-            if (!always && text.equals(lastToast) && now - lastToastAt < 10 * 60_000) return;
-            if (!always && now - lastToastAt < PROBLEM_TOAST_GAP_MS && lastToast != null) return;
-            lastToast = text;
-            lastToastAt = now;
-        }
-        App.onMain(() -> {
-            Context context = App.application();
-            String detail = StatusWords.detail(text);
-            String shown = detail.startsWith("Song removal") ? detail : "Song removal: " + detail;
-            if (context != null) Toast.makeText(context, shown, Toast.LENGTH_LONG).show();
-        });
     }
 }

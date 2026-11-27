@@ -459,6 +459,7 @@ public final class PlayerOverlay {
             unlock("the player closed", false);
         }
         if (locked && controls != null && controls.getVisibility() == View.VISIBLE) hide(controls); // came back
+        if (locked && SystemClock.uptimeMillis() - partsHiddenAt >= PARTS_GAP_MS) hideControlsParts();
         boolean lockShown = false, pillShown = false;
         if (shown && !locked) {
             ViewGroup group = (ViewGroup) controls;
@@ -662,7 +663,7 @@ public final class PlayerOverlay {
             }
         }
         ControlsLayout.Pill spot = ControlsLayout.pill(statsLeft, statsTop, statsRight, statsHeight, gap, nextLeft,
-                controlsRight, wanted, shownPill.tone == SongPillText.Tone.PROBLEM);
+                controlsRight, theme.dp(48));
         if (spot.maxWidth < theme.dp(48) || spot.top < 0 || spot.left < controlsLeft) return false;
         place(pill, spot.left, spot.top, Math.min(wanted, spot.maxWidth), statsHeight);
         return true;
@@ -751,10 +752,16 @@ public final class PlayerOverlay {
         // touches, so that tap reaches the player), and they're gone at once instead of fading out; nothing
         // brings them back until unlocked.
         View shownControls = controls.get();
+        if (DebugLog.isOn()) DebugLog.log("Player: locking, the player's named views: " + playerViews());
         if (alive(shownControls)) tapVideo();
         locked = true;
         taps.reset();
         if (shownControls != null && shownControls.getVisibility() == View.VISIBLE) hide(shownControls);
+        hideControlsParts(); // (the panel and scrims that come with the controls, outside them: at once too)
+        // What the lock left over the video, in the log: right away, and once the player's own closing is done.
+        if (DebugLog.isOn()) {
+            for (long after : LEFT_OVER_CHECKS_MS) layer.postDelayed(() -> logLeftOver(after), after);
+        }
         // Held horizontal, whichever way the phone is turned (with auto-rotate on, the app itself would leave
         // full screen on its own when the phone is held upright: that's held off too, see holdOrientation).
         orientationHeld = true;
@@ -769,7 +776,112 @@ public final class PlayerOverlay {
         DebugLog.log("Player: screen locked");
     }
 
-    /** The controls out of sight at once (they'd fade); shown again on unlock if they're still there. */
+    /**
+     * What comes and goes with the player's controls but isn't in them: the channel's panel under or over the video
+     * (in landscape) and the scrims behind the controls. Out of sight at once on locking (they'd go only with the
+     * player's own closing, or its timeout), and kept so while locked.
+     */
+    static boolean isControlsPart(String id) {
+        return id != null && (id.equals("theatre-fullbleed-metadata-band") || id.startsWith("player-controls-scrim")
+                || id.startsWith("channel-metadata"));
+    }
+
+    /** While locked, the parts are looked for again at most this often (a walk of the window). */
+    private static final long PARTS_GAP_MS = 250;
+    private long partsHiddenAt;
+
+    private void hideControlsParts() {
+        partsHiddenAt = SystemClock.uptimeMillis();
+        hideParts(decor);
+    }
+
+    private void hideParts(View view) {
+        if (view == layer || view.getVisibility() != View.VISIBLE) return;
+        if (isControlsPart(idOf(view))) {
+            hide(view);
+            return;
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) hideParts(group.getChildAt(i));
+        }
+    }
+
+    /** When what's left over the video is logged after locking (ms). */
+    private static final long[] LEFT_OVER_CHECKS_MS = {80, 400};
+
+    /**
+     * The player's named views as they show (name, place on screen, alpha), for the log: what a lock has to hide.
+     * The app's other screens (the feed under the player, the chat beside it) are left out.
+     */
+    private String playerViews() {
+        StringBuilder out = new StringBuilder();
+        playerViews(decor, out, new int[]{0});
+        return out.length() == 0 ? "none" : out.toString();
+    }
+
+    private void playerViews(View view, StringBuilder out, int[] count) {
+        if (view == layer || view.getVisibility() != View.VISIBLE || count[0] >= 60) return;
+        String id = idOf(view);
+        if (id != null && (id.startsWith("feed") || id.startsWith("chat") || id.startsWith("live-feed")
+                || id.startsWith("subfeed") || id.startsWith("viewer_") || id.startsWith("channel-points"))) {
+            return;
+        }
+        android.graphics.Rect at = new android.graphics.Rect();
+        if (id != null && view.getGlobalVisibleRect(at)) {
+            out.append(out.length() == 0 ? "" : ", ").append(id).append(' ').append(at.toShortString())
+                    .append(String.format(java.util.Locale.ROOT, " %.2f", view.getAlpha()));
+            count[0]++;
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) playerViews(group.getChildAt(i), out, count);
+        }
+    }
+
+    private void logLeftOver(long after) {
+        try {
+            if (locked) DebugLog.log("Player: over the video " + after + " ms after locking: " + shownOverVideo());
+        } catch (Throwable t) {
+            failed(t);
+        }
+    }
+
+    /** The named views that show over the video (for the log): what the lock may have left up. */
+    private String shownOverVideo() {
+        View tap = tapLayer.get();
+        if (!alive(tap)) return "(the video's tap layer isn't there)";
+        android.graphics.Rect video = new android.graphics.Rect();
+        tap.getGlobalVisibleRect(video);
+        StringBuilder out = new StringBuilder();
+        collectShown(decor, video, out, new int[]{0});
+        return out.length() == 0 ? "nothing named" : out.toString();
+    }
+
+    private static final java.util.Set<String> VIDEO_PARTS = new java.util.HashSet<>(java.util.Arrays.asList(
+            "theatre-screen", "theatre-backdrop", "theatre-video-zoom", "theatre-video-zoom-gesture-surface",
+            "player-controls-tap-layer", "theatre-video-zoom-clip", "theatre-video-zoom-video-layer", "video-player",
+            "overlay-provider-root", "overlay-host", "theatre-landscape-column-chat-layout"));
+
+    private void collectShown(View view, android.graphics.Rect video, StringBuilder out, int[] count) {
+        if (view == layer || count[0] >= 20 || view.getVisibility() != View.VISIBLE || view.getAlpha() <= 0.02f) return;
+        String id = idOf(view);
+        if (id != null && !VIDEO_PARTS.contains(id) && !id.startsWith("chat-")) {
+            android.graphics.Rect at = new android.graphics.Rect();
+            // (a view the whole video is in is a container: what's in it is looked at)
+            if (view.getGlobalVisibleRect(at) && android.graphics.Rect.intersects(at, video) && !at.contains(video)) {
+                out.append(out.length() == 0 ? "" : ", ").append(id).append(String.format(java.util.Locale.ROOT,
+                        " (alpha %.2f)", shownAlpha(view)));
+                count[0]++;
+                return; // (its parts are its)
+            }
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) collectShown(group.getChildAt(i), video, out, count);
+        }
+    }
+
     /**
      * Back while locked unlocks, then goes back as it would. Twitch targets Android 16, where back (the gesture
      * and the button) no longer comes as a key event: it's taken here first, on Android 13 and later.
@@ -904,7 +1016,17 @@ public final class PlayerOverlay {
      */
     private void tapVideo() {
         View tap = tapLayer.get();
-        if (!alive(tap)) return;
+        if (!alive(tap)) {
+            // Not known (or gone since): looked for now, past the search's pause.
+            View[] found = new View[3];
+            find(decor, layer, found);
+            if (found[1] != null) tapLayer = new WeakReference<>(found[1]);
+            tap = tapLayer.get();
+        }
+        if (!alive(tap)) {
+            DebugLog.log("PROBLEM Player: the video's tap layer wasn't found, the controls close on their own");
+            return;
+        }
         tap.getLocationOnScreen(at);
         decor.getLocationOnScreen(other);
         float x = at[0] - other[0] + tap.getWidth() * 0.25f, y = at[1] - other[1] + tap.getHeight() * 0.5f;
