@@ -1,3 +1,9 @@
+## [4.3.4](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v4.3.3...v4.3.4) (2026-11-27)
+
+### Bug Fixes
+
+* Debug log lists only what shows over the video when the screen is locked ([59b2664](https://github.com/[secure]/overhypedcat-twitch-patches/commit/59b2664fe05562b99cb13a26819bcebcd7204c78))
+
 ## [4.3.3](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v4.3.2...v4.3.3) (2026-11-27)
 
 ### Bug Fixes
