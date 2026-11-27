@@ -108,7 +108,9 @@ public final class PlayerOverlay {
     private final java.util.List<WeakReference<View>> hiddenControls = new java.util.ArrayList<>();
     private final int[] hostAt = new int[2];
     private SongPillText shownPill;
-    private boolean noPillPlaceLogged;
+    /** Frames in a row the controls had no place for the pill; told once it's this many (about a second). */
+    private int noPillPlaceFrames;
+    private static final int NO_PILL_PLACE_FRAMES = 60;
     /** When it last failed (uptime ms), 0 if it hasn't; and the failures told so far (each told once). */
     private long failedAt;
     private int failuresInARow;
@@ -162,7 +164,7 @@ public final class PlayerOverlay {
         pillText.setTypeface(TwitchFonts.regular(activity));
         pillText.setIncludeFontPadding(false);
         pillText.setSingleLine(true);
-        pillText.setEllipsize(TextUtils.TruncateAt.END);
+        pillText.setEllipsize(TextUtils.TruncateAt.MIDDLE); // (a countdown, at the end, keeps its number)
         pill.addView(pillText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         pill.setLayoutParams(new ViewGroup.LayoutParams(theme.dp(40), theme.dp(28)));
 
@@ -230,7 +232,9 @@ public final class PlayerOverlay {
         View decorView = activity.getWindow().getDecorView();
         if (decorView.getTag(GUARD_KEY) != null) return; // (guarded already)
         if (original == null) {
-            DebugLog.log("PROBLEM Player: the window has no touch callback, a locked screen can't hold back taps");
+            // No lock without it: the screen it would lock would still take every tap.
+            cannotGuard = true;
+            tell("Screen lock", "this screen gives no way to hold back taps, so there's no screen lock here");
             return;
         }
         decorView.setTag(GUARD_KEY, Boolean.TRUE);
@@ -245,6 +249,16 @@ public final class PlayerOverlay {
                             unlock("back", false); // (and back it goes, as the app does it)
                         } catch (Throwable t) {
                             failed(t);
+                        }
+                    }
+                    if (locked && "dispatchTouchEvent".equals(method.getName()) && args != null && args.length == 1
+                            && args[0] instanceof MotionEvent && logWindowGestureSafely((MotionEvent) args[0])) {
+                        // (the log window, over the locked screen, is still moved, folded and closed: it takes
+                        // every touch on itself, none reaches the player)
+                        try {
+                            return method.invoke(original, args);
+                        } catch (java.lang.reflect.InvocationTargetException e) {
+                            throw e.getCause();
                         }
                     }
                     if (locked && "dispatchTouchEvent".equals(method.getName()) && args != null && args.length == 1
@@ -459,19 +473,22 @@ public final class PlayerOverlay {
             unlock("the player closed", false);
         }
         if (locked && controls != null && controls.getVisibility() == View.VISIBLE) hide(controls); // came back
+        if (locked) keepHidden();
         if (locked && SystemClock.uptimeMillis() - partsHiddenAt >= PARTS_GAP_MS) hideControlsParts();
         boolean lockShown = false, pillShown = false;
         if (shown && !locked) {
             ViewGroup group = (ViewGroup) controls;
             View back = part(group, BACK, PART_DEPTH), scale = part(group, SCALE, PART_DEPTH);
             View stats = part(group, STATS, PART_DEPTH);
-            lockShown = fullScreen() && placeLock(group, back, scale);
+            lockShown = !cannotGuard && fullScreen() && placeLock(group, back, scale);
             pillShown = Included.songRemoval() && PatchSettings.songRemoval() && placePill(group, stats, back);
+            if (stats != null) noPillPlaceFrames = 0; // (a place)
         } else if (!locked && controls == null && Included.songRemoval() && PatchSettings.songRemoval()
                 && !pictureInPicture() && alive(composeControls.get())) {
             // (Compose's own fade can't be read: shown while its uptime is)
             pillShown = placePillByUptime(composeControls.get());
         }
+        if (!shown || locked) noPillPlaceFrames = 0; // (frames in a row while the controls are up only)
         show(lockButton, lockShown);
         if (!lockShown) lockTarget = Integer.MIN_VALUE;
         show(pill, pillShown);
@@ -506,7 +523,7 @@ public final class PlayerOverlay {
     private boolean inject(View view, ViewGroup into, View after) {
         if (view.getParent() == into) return true;
         if (!reactView(into) && !ControlsLayout.takesFreeChildren(classNames(into))) {
-            tell("these player controls (" + into.getClass().getName() + ") place their parts themselves,"
+            tell("Screen lock and song pill", "these player controls (" + into.getClass().getName() + ") place their parts themselves,"
                     + " the lock and song pill aren't shown in them");
             return false;
         }
@@ -625,12 +642,13 @@ public final class PlayerOverlay {
             // top bar, at its left; without those too, there's no telling where it wouldn't cover something.
             View above = back != null ? back : part(controls, VERTICAL_TOP_BAR, PART_DEPTH);
             if (above == null) {
-                if (!noPillPlaceLogged) {
-                    noPillPlaceLogged = true;
-                    DebugLog.log("PROBLEM Player: these controls have no place for the song pill");
+                // (told once it lasts: controls part-way built show this for a frame or two)
+                if (++noPillPlaceFrames == NO_PILL_PLACE_FRAMES) {
+                    tell("Song removal", "these player controls have no place for the song pill, its status is in the Options");
                 }
                 return false;
             }
+            noPillPlaceFrames = 0;
             above.getLocationOnScreen(at);
             int gap = theme.dp(4), left = Math.max(at[0], controlsLeft) + (above == back ? 0 : theme.dp(12));
             place(pill, left, at[1] + above.getHeight() + gap,
@@ -752,6 +770,7 @@ public final class PlayerOverlay {
         // touches, so that tap reaches the player), and they're gone at once instead of fading out; nothing
         // brings them back until unlocked.
         View shownControls = controls.get();
+        reshown.clear();
         if (DebugLog.isOn()) DebugLog.log("Player: locking, the player's named views: " + playerViews());
         if (alive(shownControls)) tapVideo();
         locked = true;
@@ -792,20 +811,26 @@ public final class PlayerOverlay {
 
     private void hideControlsParts() {
         partsHiddenAt = SystemClock.uptimeMillis();
-        hideParts(decor);
+        // The video's place: its tap layer (where the player shows its controls over it); without one, the window.
+        View tap = tapLayer.get();
+        if (!alive(tap) || !tap.getGlobalVisibleRect(videoAt)) decor.getGlobalVisibleRect(videoAt);
+        hideParts(decor, videoAt);
     }
 
-    private void hideParts(View view) {
+    private void hideParts(View view, android.graphics.Rect video) {
         if (view == layer || view.getVisibility() != View.VISIBLE) return;
         if (isControlsPart(idOf(view))) {
-            hide(view);
+            // Only over the video: a channel panel beside it (a tablet's page, split screen) is the page's own.
+            if (view.getGlobalVisibleRect(partAt) && android.graphics.Rect.intersects(partAt, video)) hide(view);
             return;
         }
         if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;
-            for (int i = 0; i < group.getChildCount(); i++) hideParts(group.getChildAt(i));
+            for (int i = 0; i < group.getChildCount(); i++) hideParts(group.getChildAt(i), video);
         }
     }
+
+    private final android.graphics.Rect partAt = new android.graphics.Rect(), videoAt = new android.graphics.Rect();
 
     /** When what's left over the video is logged after locking (ms). */
     private static final long[] LEFT_OVER_CHECKS_MS = {80, 400};
@@ -912,14 +937,36 @@ public final class PlayerOverlay {
     private void hide(View view) {
         if (!view.isAttachedToWindow()) return; // (a view the player let go of may be reused: left alone)
         view.setVisibility(View.INVISIBLE);
+        for (WeakReference<View> hidden : hiddenControls) if (hidden.get() == view) return; // (listed once)
         hiddenControls.add(new WeakReference<>(view));
     }
 
-    /** A screen lock problem that doesn't stop it, told on screen once (and in the log). */
-    private void tell(String text) {
+    /**
+     * While locked, every frame before it's drawn: what the lock hid and the player showed again is hidden again
+     * at once (no frame of it shows, no flicker). The player bringing one back is logged in Debug mode, once each.
+     */
+    private void keepHidden() {
+        for (WeakReference<View> hidden : hiddenControls) {
+            View view = hidden.get();
+            if (view == null || !view.isAttachedToWindow() || view.getVisibility() != View.VISIBLE) continue;
+            view.setVisibility(View.INVISIBLE);
+            String id = idOf(view);
+            if (DebugLog.isOn() && reshown.add(id == null ? view.getClass().getSimpleName() : id)) {
+                DebugLog.log("Player: the player showed " + (id == null ? view.getClass().getSimpleName() : id)
+                        + " again while locked, hidden again");
+            }
+        }
+    }
+
+    private final java.util.Set<String> reshown = new java.util.HashSet<>();
+    /** The window gives no way to take touches first: no lock is offered (it couldn't hold anything back). */
+    private boolean cannotGuard;
+
+    /** A problem of one of our parts of the player that doesn't stop it, told on screen once (and in the log). */
+    private void tell(String feature, String text) {
         if (!told.add(text)) return;
-        DebugLog.log("PROBLEM Screen lock: " + text);
-        Toast.makeText(activity, "Screen lock: " + text, Toast.LENGTH_LONG).show();
+        DebugLog.log("PROBLEM " + feature + ": " + text);
+        Toast.makeText(activity, feature + ": " + text, Toast.LENGTH_LONG).show();
     }
 
     private final java.util.Set<String> told = new java.util.HashSet<>();
@@ -953,6 +1000,31 @@ public final class PlayerOverlay {
             }
         }
         return true;
+    }
+
+    private boolean logGesture;
+
+    /** logWindowGesture, never throwing out of the window's touch handling (a fault: not the window's touch). */
+    private boolean logWindowGestureSafely(MotionEvent event) {
+        try {
+            return logWindowGesture(event);
+        } catch (Throwable t) {
+            failed(t);
+            return false;
+        }
+    }
+
+    /** Whether this touch belongs to a gesture that began on the log window (the whole gesture is its). */
+    private boolean logWindowGesture(MotionEvent event) {
+        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+            decor.getLocationOnScreen(other);
+            logGesture = LogWindow.covers(event.getX() + other[0], event.getY() + other[1]);
+        }
+        boolean mine = logGesture;
+        if (event.getActionMasked() == MotionEvent.ACTION_UP || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+            logGesture = false;
+        }
+        return mine;
     }
 
     private boolean buttonGesture, buttonTap;
@@ -995,7 +1067,8 @@ public final class PlayerOverlay {
             // (only what's still as the lock left it: the player may have taken it down meanwhile, GONE)
             if (view == null || view.getVisibility() != View.INVISIBLE) continue;
             view.setVisibility(View.VISIBLE);
-            if (shownAlpha(view) > 0.02f) controlsBack = true;
+            // (the controls themselves: a channel panel or scrim back doesn't mean they are)
+            if (isControls(idOf(view)) && shownAlpha(view) > 0.02f) controlsBack = true;
         }
         hiddenControls.clear();
         layer.removeCallbacks(fadeHint);
@@ -1024,7 +1097,7 @@ public final class PlayerOverlay {
             tap = tapLayer.get();
         }
         if (!alive(tap)) {
-            DebugLog.log("PROBLEM Player: the video's tap layer wasn't found, the controls close on their own");
+            tell("Screen lock", "the video's tap area wasn't found, the controls close on their own timer");
             return;
         }
         tap.getLocationOnScreen(at);

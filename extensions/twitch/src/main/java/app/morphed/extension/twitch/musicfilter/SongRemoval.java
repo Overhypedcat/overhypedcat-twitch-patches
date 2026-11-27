@@ -85,6 +85,29 @@ public final class SongRemoval {
     static volatile String soundProblem;
     /** The songs can't be kept (storage): stays true for the launch, shown whenever nothing else is. */
     static volatile String libraryProblem;
+    /** A passing problem told while no session ran: the first session shows it (its start would clear it). */
+    private static String pendingProblem;
+    private static long pendingAt;
+    /** A held problem older than this is no longer the news a starting session should show. */
+    static final long HELD_PROBLEM_MS = 2 * 60_000;
+
+    /** A problem told before any session: a passing one is kept for the first (a lasting one is shown always). */
+    static synchronized void holdForFirstSession(String text, boolean lasting) {
+        if (lasting) return;
+        pendingProblem = text;
+        pendingAt = android.os.SystemClock.elapsedRealtime();
+    }
+
+    /** The problem kept for the first session, handed over once (none once it's old). */
+    static synchronized String takeHeldProblem() {
+        return takeHeldProblem(android.os.SystemClock.elapsedRealtime());
+    }
+
+    static synchronized String takeHeldProblem(long nowMs) {
+        String held = pendingProblem;
+        pendingProblem = null;
+        return held != null && nowMs - pendingAt <= HELD_PROBLEM_MS ? held : null;
+    }
 
     static {
         PatchSettings.addListener((key, on) -> {
@@ -101,6 +124,7 @@ public final class SongRemoval {
     public static void stream(String key) {
         if (key == null || key.equals(streamKey)) return;
         streamKey = key;
+        takeHeldProblem(); // (one told for the stream before is not this one's)
         PatchSettings.watching(key); // the switch is per channel
         DebugLog.log("Song removal: stream is " + key);
     }
@@ -119,6 +143,7 @@ public final class SongRemoval {
 
     /** The retry button: forget the song and ask Shazam afresh; with no session, a failed start is tried again. */
     public static void retry() {
+        takeHeldProblem(); // (tried again: the old problem isn't shown as the new one's)
         Session current = session;
         if (current != null) {
             current.tracker.retrySoon();
@@ -489,7 +514,10 @@ public final class SongRemoval {
             made.onProblem((text, lasting) -> { // told once a launch: in the Options and on screen, never dropped
                 Session current = session;
                 if (lasting) libraryProblem = text; // stays true: shown whenever nothing else is
-                if (current == null) problem(text);
+                if (current == null) {
+                    problem(text);
+                    holdForFirstSession(text, lasting);
+                }
                 else if (lasting) current.refresh();
                 else current.told(text, 0);
             });
@@ -557,6 +585,8 @@ public final class SongRemoval {
         void start() {
             DebugLog.log("Song removal: listening to " + key);
             publish(new Status(false, step, null));
+            String pending = takeHeldProblem();
+            if (pending != null) told(pending, 0);
             thread = new Thread(() -> {
                 // Background priority (as other app work): the lowest would leave it starved for minutes.
                 android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
