@@ -879,8 +879,20 @@ public final class PlayerOverlay {
         android.graphics.Rect video = new android.graphics.Rect();
         tap.getGlobalVisibleRect(video);
         StringBuilder out = new StringBuilder();
-        collectShown(decor, video, out, new int[]{0});
-        return out.length() == 0 ? "nothing named" : out.toString();
+        // Only the player's own views: the app's other screens behind it (the feed) don't show over it.
+        collectShown(playerRoot(tap), video, out, new int[]{0});
+        return out.length() == 0 ? "nothing" : out.toString();
+    }
+
+    /** The player's screen the video is in: its theatre, else the React Native surface it's drawn in, else the window. */
+    private View playerRoot(View tap) {
+        View surface = null;
+        for (ViewParent p = tap.getParent(); p instanceof View; p = p.getParent()) {
+            View view = (View) p;
+            if ("theatre-screen".equals(idOf(view))) return view;
+            if (surface == null && view.getClass().getName().endsWith("ReactSurfaceView")) surface = view;
+        }
+        return surface != null ? surface : decor;
     }
 
     private static final java.util.Set<String> VIDEO_PARTS = new java.util.HashSet<>(java.util.Arrays.asList(
