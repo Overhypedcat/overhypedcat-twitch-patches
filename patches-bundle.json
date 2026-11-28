@@ -1,7 +1,7 @@
 {
-  "created_at": "2026-11-28T10:54:34",
-  "description": "## [4.4.0-dev.1](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v4.3.4...v4.4.0-dev.1) (2026-11-28)\n\n### New Features\n\n* Ad blocker problems shown live under its switch, as song removal's ([2623322](https://github.com/[secure]/overhypedcat-twitch-patches/commit/26233226cbc78d0d2c4a26e1334867d0f41318ee))",
-  "download_url": "https://github.com/Overhypedcat/overhypedcat-twitch-patches/releases/download/v4.4.0-dev.1/patches-4.4.0-dev.1.mpp",
+  "created_at": "2026-11-28T10:57:30",
+  "description": "## [4.4.0](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v4.3.4...v4.4.0) (2026-11-28)\n\n### New Features\n\n* Ad blocker problems shown live under its switch, as song removal's ([2623322](https://github.com/[secure]/overhypedcat-twitch-patches/commit/26233226cbc78d0d2c4a26e1334867d0f41318ee))",
+  "download_url": "https://github.com/Overhypedcat/overhypedcat-twitch-patches/releases/download/v4.4.0/patches-4.4.0.mpp",
   "signature_download_url": "",
-  "version": "4.4.0-dev.1"
+  "version": "4.4.0"
 }

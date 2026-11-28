@@ -27,7 +27,7 @@ lock and a few player options.
   `Downloads/TwitchMorphed-log-<date>.txt` for problem reports. Access tokens are removed from the log.
 
 <!-- PATCHES_START EXPANDED -->
-> **[v4.4.0-dev.1](https://github.com/Overhypedcat/overhypedcat-twitch-patches/releases/tag/v4.4.0-dev.1)**&nbsp;&nbsp;•&nbsp;&nbsp;`dev`&nbsp;&nbsp;•&nbsp;&nbsp;8 patches total
+> **[v4.4.0](https://github.com/Overhypedcat/overhypedcat-twitch-patches/releases/tag/v4.4.0)**&nbsp;&nbsp;•&nbsp;&nbsp;`main`&nbsp;&nbsp;•&nbsp;&nbsp;8 patches total
 <details open>
 <summary>Twitch&nbsp;&nbsp;•&nbsp;&nbsp;8 patches</summary>
 <br>
