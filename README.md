@@ -20,7 +20,7 @@ lock and a few player options.
 - **Screen lock.** In full screen, a padlock in the player's controls hides them at once and ignores touches until
   the screen is tapped three times. The screen stays horizontal while locked.
 - **Switches and settings.** Each feature is switched in the video player's Options, under **Patches**, in every
-  layout; a line under each switch says what it is doing. The app's Settings get a **Patch settings** group with
+  layout; a line under each switch says what it is doing right now, or what went wrong. The app's Settings get a **Patch settings** group with
   the VPN servers and Debug mode.
 - **Debug mode.** Shows what the patches do in a movable, foldable window and writes everything, including the
   video player's connections, the video's state and the phone's load, to
@@ -97,8 +97,8 @@ To build from a clone: JDK 21, the Android SDK, and `GITHUB_ACTOR`/`GITHUB_TOKEN
 - Supported Twitch version: 31.8.0.
 - Song removal works on streams with 48 kHz sound, and only removes recorded versions of songs (a live version or
   cover has no matching copy on YouTube).
-- Failures are shown on screen with their reason. Problems of the ad blocker are shown once per app start with a
-  code:
+- Failures are shown on screen with their reason. The ad blocker's are shown as they happen on the line under its
+  switch in the player's Options, with a code, until another stream is opened:
 
   | Code | Meaning |
   | --- | --- |

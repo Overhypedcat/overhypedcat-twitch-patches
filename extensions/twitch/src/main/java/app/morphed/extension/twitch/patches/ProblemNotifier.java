@@ -1,57 +1,22 @@
 package app.morphed.extension.twitch.patches;
 
-import android.content.Context;
-import android.os.Handler;
-import android.os.Looper;
 import android.util.Log;
-import android.widget.Toast;
 
-import java.util.EnumSet;
-import java.util.Set;
-
+import app.morphed.extension.twitch.adblock.AdBlockStatus;
 import app.morphed.extension.twitch.adblock.Problem;
 
 /**
- * Tells the user once per app launch and problem what went wrong with the ad blocker (and whether it needs an update).
+ * Tells the user what went wrong with the ad blocker (and whether it needs an update), each time it happens: on the
+ * line under the Ad blocker switch in the player's Options, as song removal's problems are (no toast over the
+ * stream), and in the log.
  */
 final class ProblemNotifier implements Problem.Reporter {
     private static final String TAG = "TwitchMorphed";
-
-    private final Set<Problem> shown = EnumSet.noneOf(Problem.class);
-    private final Handler main = new Handler(Looper.getMainLooper());
 
     @Override
     public void report(Problem problem, String detail) {
         Log.w(TAG, problem.code + " " + problem.description + ": " + detail);
         DebugLog.log("PROBLEM " + problem.code + " " + problem.description + ": " + detail);
-        synchronized (shown) {
-            if (!shown.add(problem)) return;
-        }
-        main.post(() -> {
-            Context context = applicationContext();
-            if (context == null) {
-                // Nothing to show it with yet: the next report of this problem tries again.
-                synchronized (shown) {
-                    shown.remove(problem);
-                }
-                return;
-            }
-            String message = problem.heading + " (" + problem.code + ")\n" + problem.description;
-            if (detail != null && !detail.isEmpty()) message += "\n" + shorten(detail);
-            Toast.makeText(context, message, Toast.LENGTH_LONG).show();
-        });
-    }
-
-    /** The detail names what Twitch changed; long URLs are cut so the message stays small. */
-    private static String shorten(String detail) {
-        return detail.length() <= 120 ? detail : detail.substring(0, 117) + "...";
-    }
-
-    private static Context applicationContext() {
-        try {
-            return (Context) Class.forName("android.app.ActivityThread").getMethod("currentApplication").invoke(null);
-        } catch (Throwable t) {
-            return null;
-        }
+        AdBlockStatus.problem(problem, detail);
     }
 }

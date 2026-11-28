@@ -25,6 +25,7 @@ import app.morphed.extension.twitch.App;
 import app.morphed.extension.twitch.Included;
 import app.morphed.extension.twitch.Messages;
 import app.morphed.extension.twitch.musicfilter.SongRemoval;
+import app.morphed.extension.twitch.adblock.AdBlockStatus;
 import app.morphed.extension.twitch.musicfilter.StatusWords;
 import app.morphed.extension.twitch.patches.DebugLog;
 import app.morphed.extension.twitch.ui.Squircle;
@@ -318,7 +319,15 @@ public final class PlayerOptionsSection {
         lookOf(titleLook, header);
         section.addView(header);
 
-        if (Included.adBlock()) section.addView(row(activity, theme, side, "Ad blocker", PatchSettings.AD_BLOCK, null, rowLook));
+        // What the ad blocker does for this stream, live, and a problem's whole reason under its few words.
+        TextView adStatus = status(activity, theme);
+        TextView adDetail = status(activity, theme);
+        adDetail.setTextSize(12);
+        adDetail.setMaxLines(Integer.MAX_VALUE); // (to report: never cut short)
+        adDetail.setEllipsize(null);
+        View adRow = row(activity, theme, side, "Ad blocker", PatchSettings.AD_BLOCK, adStatus, rowLook);
+        ((ViewGroup) ((ViewGroup) adRow).getChildAt(0)).addView(adDetail);
+        if (Included.adBlock()) section.addView(adRow);
 
         TextView songStatus = status(activity, theme);
         TextView songDetail = status(activity, theme); // a problem's whole sentence, under its few words
@@ -380,6 +389,13 @@ public final class PlayerOptionsSection {
             retry.setText(s.problem == null && s.filtering ? "Restart" : "Retry");
             if (!ticking[0]) relayout(section);
         };
+        Runnable showAd = () -> {
+            boolean on = PatchSettings.adBlock();
+            AdBlockStatus.Status a = AdBlockStatus.status();
+            show(adStatus, on ? a.line() : null, on && a.problem != null, theme);
+            show(adDetail, on ? a.problemDetail : null, false, theme);
+            relayout(section);
+        };
         Runnable showUnlock = () -> {
             boolean on = PatchSettings.qualityUnlock();
             QualityUnlock.Status s = QualityUnlock.status();
@@ -397,25 +413,31 @@ public final class PlayerOptionsSection {
         };
         showSong.run();
         showUnlock.run();
+        showAd.run();
+        AdBlockStatus.Listener adListener = a -> App.onMain(showAd);
         SongRemoval.StatusListener songListener = s -> showSong.run();
         QualityUnlock.StatusListener unlockListener = s -> showUnlock.run();
         PatchSettings.Listener settingsListener = (key, on) -> App.onMain(() -> {
             showSong.run();
             showUnlock.run();
+            showAd.run();
         });
         section.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
             @Override
             public void onViewAttachedToWindow(View v) {
                 SongRemoval.addListener(songListener);
                 QualityUnlock.addListener(unlockListener);
+                AdBlockStatus.addListener(adListener);
                 PatchSettings.addListener(settingsListener);
                 showSong.run(); // (what changed while it was away, and its countdown going again)
+                showAd.run();
             }
 
             @Override
             public void onViewDetachedFromWindow(View v) {
                 SongRemoval.removeListener(songListener);
                 QualityUnlock.removeListener(unlockListener);
+                AdBlockStatus.removeListener(adListener);
                 PatchSettings.removeListener(settingsListener);
                 section.removeCallbacks(tick[0]);
             }

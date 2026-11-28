@@ -9,6 +9,7 @@ import java.lang.reflect.Method;
 
 import app.morphed.extension.twitch.Included;
 import app.morphed.extension.twitch.adblock.AccessTokenClient;
+import app.morphed.extension.twitch.adblock.AdBlockStatus;
 import app.morphed.extension.twitch.adblock.AdBlocker;
 import app.morphed.extension.twitch.adblock.BackupStreamFinder;
 import app.morphed.extension.twitch.adblock.Http;
@@ -164,6 +165,7 @@ public final class StreamAdsPatch {
         if (System.currentTimeMillis() - lastAdBlockedShownAt < AD_BLOCKED_DEBOUNCE_MS) return;
         // The quiet time only starts once the user saw it: a block that could not be shown leaves
         // the next one free to show.
+        AdBlockStatus.clientAdBlocked();
         INDICATOR.flash("Ad blocked", () -> lastAdBlockedShownAt = System.currentTimeMillis());
     }
 
@@ -243,6 +245,7 @@ public final class StreamAdsPatch {
         AdBlocker.BreakListener breaks = new AdBlocker.BreakListener() {
             @Override
             public void onBlocking(String quality) {
+                AdBlockStatus.blocking(quality);
                 INDICATOR.show(quality);
             }
 
@@ -250,6 +253,7 @@ public final class StreamAdsPatch {
             public void onBreakOver() {
                 // No player restart (as Purple AdBlock): the numbering goes on across the break, and a
                 // pause/play would itself stall the stream for a few seconds.
+                AdBlockStatus.breakOver();
                 INDICATOR.hide();
             }
         };

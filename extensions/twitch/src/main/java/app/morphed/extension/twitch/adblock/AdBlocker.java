@@ -297,6 +297,7 @@ public final class AdBlocker {
             qualities.append(variant.resolution == null ? "audio" : variant.resolution).append(' ').append(variant.codecs);
         }
         logger.log("Watching " + channel + " as " + tokenPlayerType(url) + ": " + qualities);
+        AdBlockStatus.watching(); // (the line under the switch starts afresh for this stream)
     }
 
     private String onMediaPlaylist(StreamSession session, String url, String body) {
