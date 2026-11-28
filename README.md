@@ -4,7 +4,7 @@ Patches for the Twitch Android app, applied with [Morphe](https://morphe.softwar
 music a streamer plays out of the sound, unlock qualities Twitch offers only in some countries, and add a screen
 lock and a few player options.
 
-## What it does
+## Features
 
 - **Ad blocker.** Live streams play without the ads Twitch stitches into them, and the main page shows no banner
   or feed ads. While an ad is being skipped, a small label on the video says so ("Blocking ads (480p)" while the
@@ -54,7 +54,7 @@ lock and a few player options.
 
 <!-- PATCHES_END -->
 
-## How it does it
+## How it works
 
 The patches are Morphe bytecode patches written in Kotlin (`patches/`). They insert calls into Twitch's own code;
 the work those calls do is a Java extension (`extensions/twitch/`) that is bundled into the patched app. Twitch's
@@ -75,7 +75,7 @@ video player is Amazon IVS, whose classes the extension compiles against through
 - **Player UI.** The screen lock, song pill and switches are added as views into Twitch's React Native and native
   player controls, found by their test ids and resource ids. They follow the controls on every frame.
 
-## Dependencies
+## Requirements
 
 To use:
 
