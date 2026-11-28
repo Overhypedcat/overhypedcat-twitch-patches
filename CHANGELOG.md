@@ -1,3 +1,9 @@
+## [4.4.0-dev.1](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v4.3.4...v4.4.0-dev.1) (2026-11-28)
+
+### New Features
+
+* Ad blocker problems shown live under its switch, as song removal's ([2623322](https://github.com/[secure]/overhypedcat-twitch-patches/commit/26233226cbc78d0d2c4a26e1334867d0f41318ee))
+
 ## [4.3.4](https://github.com/[secure]/overhypedcat-twitch-patches/compare/v4.3.3...v4.3.4) (2026-11-27)
 
 ### Bug Fixes
